@@ -5,12 +5,12 @@ import (
 	"strings"
 )
 
-func scan(types ...any) (executors map[reflect.Type][]executor, applicators map[reflect.Type][]applicator) {
-	executors = make(map[reflect.Type][]executor)
-	applicators = make(map[reflect.Type][]applicator)
+func scan(types ...any) (executors map[reflect.Type][]Executor, applicators map[reflect.Type][]Applicator) {
+	executors = make(map[reflect.Type][]Executor)
+	applicators = make(map[reflect.Type][]Applicator)
 	for _, v := range types {
-		e, isExecutor := v.(executor)
-		a, isApplicator := v.(applicator)
+		e, isExecutor := v.(Executor)
+		a, isApplicator := v.(Applicator)
 		if !isExecutor && !isApplicator {
 			continue
 		}

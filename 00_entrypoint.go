@@ -3,10 +3,12 @@ package harness
 import (
 	"context"
 	"sync"
+
+	"github.com/smarty/harness/v2/internal/contracts"
 )
 
 type entrypoint struct {
-	monitor       Monitor
+	monitor       contracts.Monitor
 	waiters       *poolT[*sync.WaitGroup]
 	batches       *poolT[*batch]
 	work          chan *batch
@@ -16,7 +18,7 @@ type entrypoint struct {
 	shedThreshold float64
 }
 
-func newEntrypoint(monitor Monitor, work chan *batch, shedThreshold float64) *entrypoint {
+func newEntrypoint(monitor contracts.Monitor, work chan *batch, shedThreshold float64) *entrypoint {
 	return &entrypoint{
 		monitor:       monitor,
 		waiters:       newPoolT(newT[sync.WaitGroup]),

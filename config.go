@@ -30,6 +30,8 @@ import (
 	"context"
 	"io"
 	"net/http"
+
+	"github.com/smarty/harness/v2/internal/contracts"
 )
 
 // New constructs a staged, store-and-forward message-handling pipeline.
@@ -39,7 +41,7 @@ import (
 // no-op implementation, so omitting them produces a runnable but inert
 // pipeline — useful for tests, but not for production.
 func New(ctx context.Context, options ...option) Pipeline {
-	var cfg configuration
+	var cfg Configuration
 	for _, apply := range Options.defaults(options...) {
 		apply(&cfg)
 	}
@@ -52,86 +54,73 @@ type Pipeline struct {
 	SheddingHTTPWrapper func(http.Handler) http.Handler
 
 	// SheddingEntrypoint is a Handler that is meant to be guarded by an admitter (such as SheddingHTTPWrapper).
-	SheddingEntrypoint Handler
+	SheddingEntrypoint contracts.Handler
 
 	// BlockingEntrypoint is a Handler that will block until the results of the provided work have been durably stored.
-	BlockingEntrypoint Handler
+	BlockingEntrypoint contracts.Handler
 
 	// Listeners contains each phase of the harness pipeline (serialization, persistence, broadcast, etc.).
 	// Each listener should be invoked on a separate goroutine by a component like github.com/smarty/dominoes.
-	Listeners []Listener
+	Listeners []contracts.Listener
 }
 
 var Options singleton
 
 type singleton struct{}
-type option func(*configuration)
-
-type configuration struct {
-	monitor                Monitor
-	serializer             serializer
-	writer                 Writer
-	dispatcher             Dispatcher
-	types                  []any
-	burstCapacity          int
-	pipelineBufferCapacity int
-	executionUnitSize      int
-	serializerCount        int
-	shedThreshold          float64
-}
+type option func(*Configuration)
 
 // Types registers the domain objects whose Execute.../Apply... methods drive
 // the pipeline. They are passed verbatim to newRouter(...) at build time.
 func (singleton) Types(value ...any) option {
-	return func(this *configuration) { this.types = value }
+	return func(this *Configuration) { this.Types = value }
 }
 
 // Monitor sets the Monitor collaborator that receives pipeline observations
 // (BatchInFlight, BatchComplete, LoadShed, SerializationError, etc.).
-func (singleton) Monitor(value Monitor) option {
-	return func(this *configuration) { this.monitor = value }
+func (singleton) Monitor(value contracts.Monitor) option {
+	return func(this *Configuration) { this.Monitor = value }
 }
 
 // Serializer sets the collaborator used to encode outgoing messages into bytes.
-func (singleton) Serializer(value serializer) option {
-	return func(this *configuration) { this.serializer = value }
+func (singleton) Serializer(value Serializer) option {
+	return func(this *Configuration) { this.Serializer = value }
 }
 
 // Writer sets the collaborator that persists encoded messages (e.g. to a database or message store).
-func (singleton) Writer(value Writer) option {
-	return func(this *configuration) { this.writer = value }
+func (singleton) Writer(value contracts.Writer) option {
+	return func(this *Configuration) { this.Writer = value }
 }
 
 // Dispatcher sets the collaborator that broadcasts outgoing messages to downstream consumers.
-func (singleton) Dispatcher(value Dispatcher) option {
-	return func(this *configuration) { this.dispatcher = value }
+func (singleton) Dispatcher(value contracts.Dispatcher) option {
+	return func(this *Configuration) { this.Dispatcher = value }
 }
 
 // BurstCapacity sets the buffer size of the channel between the entrypoint and
 // execution stages. Larger values absorb more burst traffic before back-pressure
 // reaches callers. Default: 1024.
 func (singleton) BurstCapacity(value int) option {
-	return func(this *configuration) { this.burstCapacity = value }
+	return func(this *Configuration) { this.BurstCapacity = value }
 }
 
 // PipelineBufferCapacity sets the buffer size of the channels connecting all pipeline
 // stages after execution (serialization → persistence → completion → broadcast →
 // terminal). Default: 4.
 func (singleton) PipelineBufferCapacity(value int) option {
-	return func(this *configuration) { this.pipelineBufferCapacity = value }
+	return func(this *Configuration) { this.PipelineBufferCapacity = value }
 }
 
 // ExecutionUnitSize sets the maximum number of batches coalesced into a single unit of
 // work before the execution stage flushes downstream. Higher values increase
 // throughput at the cost of latency per batch. Default: 64.
 func (singleton) ExecutionUnitSize(value int) option {
-	return func(this *configuration) { this.executionUnitSize = value }
+	return func(this *Configuration) { this.ExecutionUnitSize = value }
 }
 
 // SerializerCount sets the number of concurrent serialization goroutines.
 // Default: 4.
 func (singleton) SerializerCount(value int) option {
-	return func(this *configuration) { this.serializerCount = value }
+	return func(this *Configuration) { this.SerializerCount = value }
 }
 
 // ShedThreshold sets the load-shedding threshold as a fraction of BurstCapacity
@@ -140,7 +129,7 @@ func (singleton) SerializerCount(value int) option {
 // This option only affects HTTP callers.
 // Default: 0.80.
 func (singleton) ShedThreshold(value float64) option {
-	return func(this *configuration) { this.shedThreshold = value }
+	return func(this *Configuration) { this.ShedThreshold = value }
 }
 
 func (singleton) defaults(options ...option) []option {
@@ -162,8 +151,8 @@ func (singleton) defaults(options ...option) []option {
 // zero options and still produce a runnable (if inert) pipeline.
 type nop struct{}
 
-func (nop) Track(any)                                   {}
-func (nop) Serialize(io.Writer, any) error              { return nil }
-func (nop) ContentType() string                         { return "" }
-func (nop) Write(context.Context, ...*Message) error    { return nil }
-func (nop) Dispatch(context.Context, ...*Message) error { return nil }
+func (nop) Track(any)                                             {}
+func (nop) Serialize(io.Writer, any) error                        { return nil }
+func (nop) ContentType() string                                   { return "" }
+func (nop) Write(context.Context, ...*contracts.Message) error    { return nil }
+func (nop) Dispatch(context.Context, ...*contracts.Message) error { return nil }

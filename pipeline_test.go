@@ -9,6 +9,7 @@ import (
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/better"
 	"github.com/smarty/gunit/v2/assert/should"
+	"github.com/smarty/harness/v2/internal/contracts"
 )
 
 func TestPipelineFixture(t *testing.T) {
@@ -26,9 +27,9 @@ type PipelineFixture struct {
 	executeOutputs [][]any
 
 	writeLock     sync.Mutex
-	writeCalls    [][]*Message
+	writeCalls    [][]*contracts.Message
 	dispatchLock  sync.Mutex
-	dispatchCalls [][]*Message
+	dispatchCalls [][]*contracts.Message
 
 	trackLock sync.Mutex
 	tracked   []any
@@ -79,9 +80,9 @@ func (this *PipelineFixture) Serialize(out io.Writer, _ any) error {
 
 func (this *PipelineFixture) ContentType() string { return "" }
 
-func (this *PipelineFixture) Write(ctx context.Context, messages ...*Message) error {
+func (this *PipelineFixture) Write(ctx context.Context, messages ...*contracts.Message) error {
 	this.So(ctx.Value("testing"), should.Equal, this.Name())
-	buffer := make([]*Message, len(messages))
+	buffer := make([]*contracts.Message, len(messages))
 	copy(buffer, messages)
 	this.writeLock.Lock()
 	this.writeCalls = append(this.writeCalls, buffer)
@@ -89,9 +90,9 @@ func (this *PipelineFixture) Write(ctx context.Context, messages ...*Message) er
 	return nil
 }
 
-func (this *PipelineFixture) Dispatch(ctx context.Context, messages ...*Message) error {
+func (this *PipelineFixture) Dispatch(ctx context.Context, messages ...*contracts.Message) error {
 	this.So(ctx.Value("testing"), should.Equal, this.Name())
-	captured := make([]*Message, len(messages))
+	captured := make([]*contracts.Message, len(messages))
 	copy(captured, messages)
 	this.dispatchLock.Lock()
 	this.dispatchCalls = append(this.dispatchCalls, captured)

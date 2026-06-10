@@ -8,6 +8,7 @@ import (
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
+	"github.com/smarty/harness/v2/internal/contracts"
 )
 
 func TestSerializationFixture(t *testing.T) {
@@ -64,7 +65,7 @@ func (this *SerializationFixture) drain() (results []*unitOfWork) {
 }
 
 func (this *SerializationFixture) TestSerializesEachResultValueIntoContent() {
-	unit := &unitOfWork{results: []*Message{
+	unit := &unitOfWork{results: []*contracts.Message{
 		{Value: "alpha", Content: bytes.NewBuffer(nil)},
 		{Value: "beta", Content: bytes.NewBuffer(nil)},
 	}}
@@ -82,8 +83,8 @@ func (this *SerializationFixture) TestSerializesEachResultValueIntoContent() {
 }
 
 func (this *SerializationFixture) TestForwardsUnitsInOrder() {
-	this.input <- &unitOfWork{results: []*Message{{Value: "one", Content: bytes.NewBuffer(nil)}}}
-	this.input <- &unitOfWork{results: []*Message{{Value: "two", Content: bytes.NewBuffer(nil)}}}
+	this.input <- &unitOfWork{results: []*contracts.Message{{Value: "one", Content: bytes.NewBuffer(nil)}}}
+	this.input <- &unitOfWork{results: []*contracts.Message{{Value: "two", Content: bytes.NewBuffer(nil)}}}
 	close(this.input)
 
 	go this.subject.Listen()
@@ -116,7 +117,7 @@ func (this *SerializationFixture) TestClosedInputClosesOutput() {
 }
 
 func (this *SerializationFixture) TestSerializesEachResultValueIntoContent_PopulatesContentTypeOnSuccess() {
-	unit := &unitOfWork{results: []*Message{
+	unit := &unitOfWork{results: []*contracts.Message{
 		{Value: "hello", Content: bytes.NewBuffer(nil)},
 	}}
 	this.input <- unit
@@ -144,7 +145,7 @@ func (this *SerializationFixture) TestSerializerErrorTracksThenPanics() {
 		Value: "unserializable",
 	}
 	this.serializeFail[bad] = boom
-	unit := &unitOfWork{results: []*Message{
+	unit := &unitOfWork{results: []*contracts.Message{
 		{Value: "good-1", Content: bytes.NewBuffer(nil)},
 		{Value: bad, Content: bytes.NewBuffer(nil)},
 		{Value: "good-2", Content: bytes.NewBuffer(nil)},
@@ -171,8 +172,8 @@ func (this *SerializationFixture) TestSerializerErrorTracksThenPanics() {
 func (this *SerializationFixture) TestUnitsBeforeFailureRemainForwarded() {
 	boom := errors.New("boom")
 	this.serializeFail["bad"] = boom
-	this.input <- &unitOfWork{results: []*Message{{Value: "one", Content: bytes.NewBuffer(nil)}}}
-	this.input <- &unitOfWork{results: []*Message{{Value: "bad", Content: bytes.NewBuffer(nil)}}}
+	this.input <- &unitOfWork{results: []*contracts.Message{{Value: "one", Content: bytes.NewBuffer(nil)}}}
+	this.input <- &unitOfWork{results: []*contracts.Message{{Value: "bad", Content: bytes.NewBuffer(nil)}}}
 	close(this.input)
 
 	recovered := this.listenAndRecover()

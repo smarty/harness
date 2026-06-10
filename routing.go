@@ -5,17 +5,17 @@ import "reflect"
 // router dispatches messages to Execute*/Apply* methods discovered reflectively
 // from the domain types registered via Options.Types(...). It is unexported
 // because callers never hold one directly — build(ctx, cfg) constructs the sole
-// instance per pipeline and feeds it into the execution stage as its executor
+// instance per pipeline and feeds it into the execution stage as its Executor
 // collaborator. The router is not safe for concurrent use; the pipeline only
 // calls Execute from within a single execution goroutine.
 type router struct {
-	executors   map[reflect.Type][]executor
-	applicators map[reflect.Type][]applicator
+	executors   map[reflect.Type][]Executor
+	applicators map[reflect.Type][]Applicator
 	exclusions  []exclusion
 }
 type exclusion struct {
 	message any
-	self    applicator
+	self    Applicator
 }
 
 func newRouter(types ...any) *router {
@@ -55,7 +55,7 @@ func (this *router) Execute(message any, broadcast func(...any)) {
 	}
 	this.exclusions = this.exclusions[:0]
 }
-func (this *router) selfApplicator(result any, e executor) applicator {
+func (this *router) selfApplicator(result any, e Executor) Applicator {
 	for _, a := range this.applicators[reflect.TypeOf(result)] {
 		if any(a) == any(e) {
 			return a

@@ -1,15 +1,19 @@
 package harness
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/smarty/harness/v2/internal/contracts"
+)
 
 type serialization struct {
-	monitor    Monitor
-	serializer serializer
+	monitor    contracts.Monitor
+	serializer Serializer
 	input      chan *unitOfWork
 	output     chan *unitOfWork
 }
 
-func newSerialization(monitor Monitor, enc serializer, input, output chan *unitOfWork) *serialization {
+func newSerialization(monitor contracts.Monitor, enc Serializer, input, output chan *unitOfWork) *serialization {
 	return &serialization{
 		monitor:    monitor,
 		serializer: enc,

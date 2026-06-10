@@ -3,6 +3,8 @@ package harness
 import (
 	"context"
 	"net/http"
+
+	"github.com/smarty/harness/v2/internal/contracts"
 )
 
 type (
@@ -38,7 +40,7 @@ var shedResponseBody = []byte(`{"errors":[{"message":"service overloaded"}]}`)
 // HTTPAdapter adapts the entrypoint Handler for use by an http.Handler.
 type HTTPAdapter interface {
 	// Handler is what the user-supplied http.Handler will invoke
-	Handler
+	contracts.Handler
 
 	// HTTPHandler wraps the user-supplied http.Handler with an admission check.
 	HTTPHandler(inner http.Handler) (wrapped http.Handler)

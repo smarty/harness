@@ -2,17 +2,19 @@ package harness
 
 import (
 	"bytes"
+
+	"github.com/smarty/harness/v2/internal/contracts"
 )
 
 type execution struct {
-	monitor     Monitor
+	monitor     contracts.Monitor
 	maxUnitSize int
 	input       chan *batch
 	output      chan *unitOfWork
-	executor    executor
+	executor    Executor
 }
 
-func newExecution(monitor Monitor, maxUnitSize int, input chan *batch, output chan *unitOfWork, exec executor) *execution {
+func newExecution(monitor contracts.Monitor, maxUnitSize int, input chan *batch, output chan *unitOfWork, exec Executor) *execution {
 	return &execution{
 		monitor:     monitor,
 		maxUnitSize: maxUnitSize,
@@ -34,7 +36,7 @@ func (this *execution) Listen() {
 		for _, message := range item.messages {
 			this.executor.Execute(message, func(outgoing ...any) {
 				for _, result := range outgoing {
-					record := &Message{Value: result, Content: bytes.NewBuffer(nil)} // TODO: pool for *Message
+					record := &contracts.Message{Value: result, Content: bytes.NewBuffer(nil)} // TODO: pool for *Message
 					unit.results = append(unit.results, record)
 				}
 			})

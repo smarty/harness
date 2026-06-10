@@ -127,7 +127,7 @@ type (
 	bogusApplyMsg struct{}
 )
 
-// fakeOrchestrator satisfies both executor and applicator; its specific Execute*/Apply*
+// fakeOrchestrator satisfies both Executor and Applicator; its specific Execute*/Apply*
 // methods exercise every branch of scan() — both the matching cases and the cases that
 // must be filtered out.
 type fakeOrchestrator struct {

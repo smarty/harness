@@ -1,28 +1,32 @@
 package harness
 
-import "context"
+import (
+	"context"
 
-func build(ctx context.Context, config configuration) (result Pipeline) {
+	"github.com/smarty/harness/v2/internal/contracts"
+)
+
+func build(ctx context.Context, config Configuration) (result Pipeline) {
 	var (
-		batches = make(chan *batch, config.burstCapacity)
-		work1   = make(chan *unitOfWork, config.pipelineBufferCapacity)
-		work2   = make(chan *unitOfWork, config.pipelineBufferCapacity)
-		work3   = make(chan *unitOfWork, config.pipelineBufferCapacity)
-		work4   = make(chan *unitOfWork, config.pipelineBufferCapacity)
-		work5   = make(chan *unitOfWork, config.pipelineBufferCapacity)
+		batches = make(chan *batch, config.BurstCapacity)
+		work1   = make(chan *unitOfWork, config.PipelineBufferCapacity)
+		work2   = make(chan *unitOfWork, config.PipelineBufferCapacity)
+		work3   = make(chan *unitOfWork, config.PipelineBufferCapacity)
+		work4   = make(chan *unitOfWork, config.PipelineBufferCapacity)
+		work5   = make(chan *unitOfWork, config.PipelineBufferCapacity)
 	)
 
 	var (
-		entrypoint  = newEntrypoint(config.monitor, batches, config.shedThreshold)
-		executor    = newExecution(config.monitor, config.executionUnitSize, batches, work1, newRouter(config.types...))
-		serializers = newFanOut(serializationFactory(config.monitor, config.serializer), config.serializerCount, config.pipelineBufferCapacity, work1, work2)
-		persistence = newPersistence(ctx, config.monitor, work2, work3, config.writer, wait)
+		entrypoint  = newEntrypoint(config.Monitor, batches, config.ShedThreshold)
+		executor    = newExecution(config.Monitor, config.ExecutionUnitSize, batches, work1, newRouter(config.Types...))
+		serializers = newFanOut(serializationFactory(config.Monitor, config.Serializer), config.SerializerCount, config.PipelineBufferCapacity, work1, work2)
+		persistence = newPersistence(ctx, config.Monitor, work2, work3, config.Writer, wait)
 		completion  = newCompletion(work3, work4)
-		broadcast   = newBroadcast(ctx, config.monitor, work4, work5, config.dispatcher, wait)
+		broadcast   = newBroadcast(ctx, config.Monitor, work4, work5, config.Dispatcher, wait)
 		terminal    = newTerminal(work5)
 	)
 
-	var listeners []Listener
+	var listeners []contracts.Listener
 	listeners = append(listeners,
 		entrypoint,
 		executor,
@@ -43,8 +47,8 @@ func build(ctx context.Context, config configuration) (result Pipeline) {
 	}
 }
 
-func serializationFactory(monitor Monitor, enc serializer) stationFactory {
-	return func(in, out chan *unitOfWork) Listener {
+func serializationFactory(monitor contracts.Monitor, enc Serializer) stationFactory {
+	return func(in, out chan *unitOfWork) contracts.Listener {
 		return newSerialization(monitor, enc, in, out)
 	}
 }

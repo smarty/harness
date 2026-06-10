@@ -4,19 +4,21 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/smarty/harness/v2/internal/contracts"
 )
 
 type persistence struct {
 	ctx     context.Context
-	monitor Monitor
+	monitor contracts.Monitor
 	input   chan *unitOfWork
 	output  chan *unitOfWork
-	writer  Writer
+	writer  contracts.Writer
 	wait    func(context.Context, time.Duration) error
-	buffer  []*Message
+	buffer  []*contracts.Message
 }
 
-func newPersistence(ctx context.Context, monitor Monitor, input, output chan *unitOfWork, writer Writer, wait func(context.Context, time.Duration) error) *persistence {
+func newPersistence(ctx context.Context, monitor contracts.Monitor, input, output chan *unitOfWork, writer contracts.Writer, wait func(context.Context, time.Duration) error) *persistence {
 	return &persistence{
 		ctx:     ctx,
 		monitor: monitor,
@@ -24,7 +26,7 @@ func newPersistence(ctx context.Context, monitor Monitor, input, output chan *un
 		output:  output,
 		writer:  writer,
 		wait:    wait,
-		buffer:  make([]*Message, 0, 1024),
+		buffer:  make([]*contracts.Message, 0, 1024),
 	}
 }
 

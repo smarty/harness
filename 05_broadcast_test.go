@@ -9,6 +9,7 @@ import (
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
+	"github.com/smarty/harness/v2/internal/contracts"
 )
 
 func TestBroadcastFixture(t *testing.T) {
@@ -25,7 +26,7 @@ type BroadcastFixture struct {
 	subject *broadcast
 
 	dispatchMu        sync.Mutex
-	dispatchCalls     [][]*Message
+	dispatchCalls     [][]*contracts.Message
 	dispatchFailCount int
 
 	tracked []any
@@ -47,9 +48,9 @@ func (this *BroadcastFixture) Track(observation any) {
 	this.tracked = append(this.tracked, observation)
 }
 
-func (this *BroadcastFixture) Dispatch(ctx context.Context, messages ...*Message) error {
+func (this *BroadcastFixture) Dispatch(ctx context.Context, messages ...*contracts.Message) error {
 	this.So(ctx.Value("testing"), should.Equal, this.Name())
-	captured := make([]*Message, len(messages))
+	captured := make([]*contracts.Message, len(messages))
 	copy(captured, messages)
 	this.dispatchMu.Lock()
 	this.dispatchCalls = append(this.dispatchCalls, captured)
@@ -69,9 +70,9 @@ func (this *BroadcastFixture) drain() (results []*unitOfWork) {
 }
 
 func (this *BroadcastFixture) TestDispatchesAllResultsThenForwardsUnit() {
-	m1 := &Message{Value: "a"}
-	m2 := &Message{Value: "b"}
-	this.input <- &unitOfWork{results: []*Message{m1, m2}}
+	m1 := &contracts.Message{Value: "a"}
+	m2 := &contracts.Message{Value: "b"}
+	this.input <- &unitOfWork{results: []*contracts.Message{m1, m2}}
 	close(this.input)
 
 	go this.subject.Listen()
@@ -79,16 +80,16 @@ func (this *BroadcastFixture) TestDispatchesAllResultsThenForwardsUnit() {
 	units := this.drain()
 	this.So(len(units), should.Equal, 1)
 	this.So(len(this.dispatchCalls), should.Equal, 1)
-	this.So(this.dispatchCalls[0], should.Equal, []*Message{m1, m2})
+	this.So(this.dispatchCalls[0], should.Equal, []*contracts.Message{m1, m2})
 	this.So(this.waits, should.BeEmpty)
 	this.So(this.tracked, should.BeEmpty)
 }
 
 func (this *BroadcastFixture) TestEachUnitDispatchedIndependently() {
-	m1 := &Message{Value: "a"}
-	m2 := &Message{Value: "b"}
-	this.input <- &unitOfWork{results: []*Message{m1}}
-	this.input <- &unitOfWork{results: []*Message{m2}}
+	m1 := &contracts.Message{Value: "a"}
+	m2 := &contracts.Message{Value: "b"}
+	this.input <- &unitOfWork{results: []*contracts.Message{m1}}
+	this.input <- &unitOfWork{results: []*contracts.Message{m2}}
 	close(this.input)
 
 	go this.subject.Listen()
@@ -96,8 +97,8 @@ func (this *BroadcastFixture) TestEachUnitDispatchedIndependently() {
 	units := this.drain()
 	this.So(len(units), should.Equal, 2)
 	this.So(len(this.dispatchCalls), should.Equal, 2)
-	this.So(this.dispatchCalls[0], should.Equal, []*Message{m1})
-	this.So(this.dispatchCalls[1], should.Equal, []*Message{m2})
+	this.So(this.dispatchCalls[0], should.Equal, []*contracts.Message{m1})
+	this.So(this.dispatchCalls[1], should.Equal, []*contracts.Message{m2})
 	this.So(this.tracked, should.BeEmpty)
 }
 
@@ -116,8 +117,8 @@ func (this *BroadcastFixture) TestEmptyResultsTriggersEmptyDispatch() {
 
 func (this *BroadcastFixture) TestRetriesUntilDispatchSucceeds() {
 	this.dispatchFailCount = 2
-	m := &Message{Value: "retried"}
-	this.input <- &unitOfWork{results: []*Message{m}}
+	m := &contracts.Message{Value: "retried"}
+	this.input <- &unitOfWork{results: []*contracts.Message{m}}
 	close(this.input)
 
 	go this.subject.Listen()
@@ -138,7 +139,7 @@ func (this *BroadcastFixture) TestRetriesUntilDispatchSucceeds() {
 func (this *BroadcastFixture) TestBroadcastAbandonsOnContextCancelButStillForwards() {
 	this.dispatchFailCount = 1 << 30 // always fail
 	this.waitErr = context.Canceled
-	unit := &unitOfWork{results: []*Message{{Value: "abandoned"}}}
+	unit := &unitOfWork{results: []*contracts.Message{{Value: "abandoned"}}}
 	this.input <- unit
 	close(this.input)
 

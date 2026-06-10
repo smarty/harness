@@ -4,25 +4,27 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/smarty/harness/v2/internal/contracts"
 )
 
 type broadcast struct {
 	ctx        context.Context
-	monitor    Monitor
+	monitor    contracts.Monitor
 	input      chan *unitOfWork
 	output     chan *unitOfWork
-	buffer     []*Message
-	dispatcher Dispatcher
+	buffer     []*contracts.Message
+	dispatcher contracts.Dispatcher
 	wait       func(context.Context, time.Duration) error
 }
 
-func newBroadcast(ctx context.Context, monitor Monitor, input, output chan *unitOfWork, dispatcher Dispatcher, wait func(context.Context, time.Duration) error) *broadcast {
+func newBroadcast(ctx context.Context, monitor contracts.Monitor, input, output chan *unitOfWork, dispatcher contracts.Dispatcher, wait func(context.Context, time.Duration) error) *broadcast {
 	return &broadcast{
 		ctx:        ctx,
 		monitor:    monitor,
 		input:      input,
 		output:     output,
-		buffer:     make([]*Message, 0, 1024),
+		buffer:     make([]*contracts.Message, 0, 1024),
 		dispatcher: dispatcher,
 		wait:       wait,
 	}

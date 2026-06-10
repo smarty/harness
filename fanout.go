@@ -1,12 +1,16 @@
 package harness
 
-import "sync"
+import (
+	"sync"
 
-type stationFactory func(in, out chan *unitOfWork) Listener
+	"github.com/smarty/harness/v2/internal/contracts"
+)
 
-func newFanOut(factory stationFactory, workerCount, unitCapacity int, input, finalOutput chan *unitOfWork) []Listener {
+type stationFactory func(in, out chan *unitOfWork) contracts.Listener
+
+func newFanOut(factory stationFactory, workerCount, unitCapacity int, input, finalOutput chan *unitOfWork) []contracts.Listener {
 	var (
-		listeners = make([]Listener, workerCount)
+		listeners = make([]contracts.Listener, workerCount)
 		outputs   = make([]chan *unitOfWork, workerCount)
 	)
 	for i := range workerCount {
