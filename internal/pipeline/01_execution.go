@@ -11,10 +11,10 @@ type execution struct {
 	maxUnitSize int
 	input       chan *batch
 	output      chan *unitOfWork
-	executor    Executor
+	executor    executor
 }
 
-func newExecution(monitor contracts.Monitor, maxUnitSize int, input chan *batch, output chan *unitOfWork, exec Executor) *execution {
+func newExecution(monitor contracts.Monitor, maxUnitSize int, input chan *batch, output chan *unitOfWork, exec executor) *execution {
 	return &execution{
 		monitor:     monitor,
 		maxUnitSize: maxUnitSize,

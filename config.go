@@ -66,7 +66,7 @@ func (singleton) Monitor(value contracts.Monitor) option {
 }
 
 // Serializer sets the collaborator used to encode outgoing messages into bytes.
-func (singleton) Serializer(value pipeline.Serializer) option {
+func (singleton) Serializer(value contracts.Serializer) option {
 	return func(this *pipeline.Configuration) { this.Serializer = value }
 }
 

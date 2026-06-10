@@ -8,12 +8,12 @@ import (
 
 type serialization struct {
 	monitor    contracts.Monitor
-	serializer Serializer
+	serializer contracts.Serializer
 	input      chan *unitOfWork
 	output     chan *unitOfWork
 }
 
-func newSerialization(monitor contracts.Monitor, enc Serializer, input, output chan *unitOfWork) *serialization {
+func newSerialization(monitor contracts.Monitor, enc contracts.Serializer, input, output chan *unitOfWork) *serialization {
 	return &serialization{
 		monitor:    monitor,
 		serializer: enc,

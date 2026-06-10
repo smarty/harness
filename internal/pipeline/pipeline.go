@@ -6,6 +6,19 @@ import (
 	"github.com/smarty/harness/v2/internal/contracts"
 )
 
+type Configuration struct {
+	Monitor                contracts.Monitor
+	Serializer             contracts.Serializer
+	Writer                 contracts.Writer
+	Dispatcher             contracts.Dispatcher
+	Types                  []any
+	BurstCapacity          int
+	PipelineBufferCapacity int
+	ExecutionUnitSize      int
+	SerializerCount        int
+	ShedThreshold          float64
+}
+
 func Build(ctx context.Context, config Configuration) (result contracts.Pipeline) {
 	var (
 		batches = make(chan *batch, config.BurstCapacity)
@@ -47,7 +60,7 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 	}
 }
 
-func serializationFactory(monitor contracts.Monitor, enc Serializer) stationFactory {
+func serializationFactory(monitor contracts.Monitor, enc contracts.Serializer) stationFactory {
 	return func(in, out chan *unitOfWork) contracts.Listener {
 		return newSerialization(monitor, enc, in, out)
 	}

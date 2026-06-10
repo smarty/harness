@@ -3,8 +3,6 @@ package pipeline
 import (
 	"context"
 	"net/http"
-
-	"github.com/smarty/harness/v2/internal/contracts"
 )
 
 type (
@@ -37,15 +35,7 @@ func admission(handler admitter, inner http.Handler) http.Handler {
 
 var shedResponseBody = []byte(`{"errors":[{"message":"service overloaded"}]}`)
 
-// HTTPAdapter adapts the entrypoint Handler for use by an http.Handler.
-type HTTPAdapter interface {
-	// Handler is what the user-supplied http.Handler will invoke
-	contracts.Handler
-
-	// HTTPHandler wraps the user-supplied http.Handler with an admission check.
-	HTTPHandler(inner http.Handler) (wrapped http.Handler)
-}
-
+// httpAdapter adapts the entrypoint Handler for use by an http.Handler.
 type httpAdapter struct {
 	target httpEntrypoint
 }
@@ -54,9 +44,12 @@ func newHTTPAdapter(target httpEntrypoint) *httpAdapter {
 	return &httpAdapter{target}
 }
 
+// HTTPHandler wraps the user-supplied http.Handler with an admission check.
 func (this *httpAdapter) HTTPHandler(inner http.Handler) http.Handler {
 	return admission(this.target, inner)
 }
+
+// Handle is what the user-supplied http.Handler will invoke
 func (this *httpAdapter) Handle(ctx context.Context, messages ...any) {
 	for _, message := range messages {
 		this.target.await(ctx, message)
