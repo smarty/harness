@@ -1,4 +1,4 @@
-package harness
+package pipeline
 
 type completion struct {
 	input  chan *unitOfWork

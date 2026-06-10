@@ -1,4 +1,4 @@
-package harness
+package pipeline
 
 import (
 	"bytes"
@@ -158,12 +158,12 @@ func (this *SerializationFixture) TestSerializerErrorTracksThenPanics() {
 	this.So(recovered, should.NOT.BeNil)
 	err, isError := recovered.(error)
 	this.So(isError, should.BeTrue)
-	this.So(err, should.WrapError, ErrSerialization)
+	this.So(err, should.WrapError, contracts.ErrSerialization)
 	this.So(err, should.WrapError, boom)
 	this.So(this.tracked, should.HaveLength, 1)
-	observation, isObservation := this.tracked[0].(SerializationError)
+	observation, isObservation := this.tracked[0].(contracts.SerializationError)
 	this.So(isObservation, should.BeTrue)
-	this.So(observation.Error, should.WrapError, ErrSerialization)
+	this.So(observation.Error, should.WrapError, contracts.ErrSerialization)
 	this.So(observation.Value, should.Equal, bad)
 	this.So(this.serializeCalls, should.Equal, []any{"good-1", bad})
 	this.So(this.drain(), should.BeEmpty) // drain returning proves output was closed during unwind

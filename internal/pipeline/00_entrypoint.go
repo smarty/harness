@@ -1,16 +1,17 @@
-package harness
+package pipeline
 
 import (
 	"context"
 	"sync"
 
 	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/internal/generic"
 )
 
 type entrypoint struct {
 	monitor       contracts.Monitor
-	waiters       *poolT[*sync.WaitGroup]
-	batches       *poolT[*batch]
+	waiters       *generic.PoolT[*sync.WaitGroup]
+	batches       *generic.PoolT[*batch]
 	work          chan *batch
 	lock          *sync.RWMutex
 	closed        bool
@@ -21,8 +22,8 @@ type entrypoint struct {
 func newEntrypoint(monitor contracts.Monitor, work chan *batch, shedThreshold float64) *entrypoint {
 	return &entrypoint{
 		monitor:       monitor,
-		waiters:       newPoolT(newT[sync.WaitGroup]),
-		batches:       newPoolT(newT[batch]),
+		waiters:       generic.NewPoolT(generic.NewT[sync.WaitGroup]),
+		batches:       generic.NewPoolT(generic.NewT[batch]),
 		work:          work,
 		lock:          new(sync.RWMutex),
 		done:          make(chan struct{}),
@@ -135,8 +136,8 @@ func (this *entrypoint) Close() error {
 }
 
 var (
-	batchInFlight  BatchInFlight
-	batchComplete  BatchComplete
-	loadShed       LoadShed
-	callerDeparted CallerDeparted
+	batchInFlight  contracts.BatchInFlight
+	batchComplete  contracts.BatchComplete
+	loadShed       contracts.LoadShed
+	callerDeparted contracts.CallerDeparted
 )

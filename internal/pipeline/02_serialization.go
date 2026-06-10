@@ -1,4 +1,4 @@
-package harness
+package pipeline
 
 import (
 	"fmt"
@@ -28,9 +28,9 @@ func (this *serialization) Listen() {
 		for _, message := range unit.results {
 			err := this.serializer.Serialize(message.Content, message.Value)
 			if err != nil {
-				failure := SerializationError{
+				failure := contracts.SerializationError{
 					Value: message.Value,
-					Error: fmt.Errorf("%w: %w", ErrSerialization, err),
+					Error: fmt.Errorf("%w: %w", contracts.ErrSerialization, err),
 				}
 				this.monitor.Track(failure)
 				panic(failure.Error) // The caller has failed to produce only values that will serialize successfully.

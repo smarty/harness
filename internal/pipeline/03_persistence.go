@@ -1,4 +1,4 @@
-package harness
+package pipeline
 
 import (
 	"context"
@@ -45,19 +45,19 @@ func (this *persistence) Listen() {
 	}
 }
 func (this *persistence) store() (stored bool) {
-	var failure PersistenceError
+	var failure contracts.PersistenceError
 	for attempt := 1; ; attempt++ {
 		err := this.writer.Write(this.ctx, this.buffer...)
 		if err == nil {
 			return true
 		}
 		failure.Attempt = attempt
-		failure.Error = fmt.Errorf("%w: %w", ErrPersistence, err)
+		failure.Error = fmt.Errorf("%w: %w", contracts.ErrPersistence, err)
 		this.monitor.Track(failure)
 		// Retries forever (until the process restarts) unless the context is cancelled.
 		// TODO: exponential back-off w/ jitter
 		if this.wait(this.ctx, time.Second) != nil {
-			this.monitor.Track(PersistenceAbandoned{Attempts: attempt})
+			this.monitor.Track(contracts.PersistenceAbandoned{Attempts: attempt})
 			return false
 		}
 	}

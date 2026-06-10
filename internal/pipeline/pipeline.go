@@ -1,4 +1,4 @@
-package harness
+package pipeline
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"github.com/smarty/harness/v2/internal/contracts"
 )
 
-func build(ctx context.Context, config Configuration) (result Pipeline) {
+func Build(ctx context.Context, config Configuration) (result contracts.Pipeline) {
 	var (
 		batches = make(chan *batch, config.BurstCapacity)
 		work1   = make(chan *unitOfWork, config.PipelineBufferCapacity)
@@ -39,7 +39,7 @@ func build(ctx context.Context, config Configuration) (result Pipeline) {
 		terminal,
 	)
 	adapter := newHTTPAdapter(entrypoint)
-	return Pipeline{
+	return contracts.Pipeline{
 		SheddingHTTPWrapper: adapter.HTTPHandler,
 		SheddingEntrypoint:  adapter,
 		BlockingEntrypoint:  entrypoint,

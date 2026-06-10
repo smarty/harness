@@ -1,10 +1,10 @@
-package harness
+package pipeline
 
 import "reflect"
 
 // router dispatches messages to Execute*/Apply* methods discovered reflectively
 // from the domain types registered via Options.Types(...). It is unexported
-// because callers never hold one directly — build(ctx, cfg) constructs the sole
+// because callers never hold one directly — Build(ctx, cfg) constructs the sole
 // instance per pipeline and feeds it into the execution stage as its Executor
 // collaborator. The router is not safe for concurrent use; the pipeline only
 // calls Execute from within a single execution goroutine.

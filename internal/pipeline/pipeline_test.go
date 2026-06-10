@@ -1,4 +1,4 @@
-package harness
+package pipeline
 
 import (
 	"context"
@@ -19,7 +19,7 @@ func TestPipelineFixture(t *testing.T) {
 type PipelineFixture struct {
 	*gunit.Fixture
 	ctx      context.Context
-	pipeline Pipeline
+	pipeline contracts.Pipeline
 	waiter   sync.WaitGroup
 
 	executeLock    sync.Mutex
@@ -39,13 +39,18 @@ type commandType string
 
 func (this *PipelineFixture) Setup() {
 	this.ctx = context.WithValue(this.Context(), "testing", this.Name())
-	this.pipeline = New(this.ctx,
-		Options.Types(this),
-		Options.Monitor(this),
-		Options.Serializer(this),
-		Options.Writer(this),
-		Options.Dispatcher(this),
-	)
+	this.pipeline = Build(this.ctx, Configuration{
+		Monitor:                this,
+		Serializer:             this,
+		Writer:                 this,
+		Dispatcher:             this,
+		Types:                  []any{this},
+		BurstCapacity:          1024,
+		PipelineBufferCapacity: 4,
+		ExecutionUnitSize:      64,
+		SerializerCount:        4,
+		ShedThreshold:          0.8,
+	})
 	for _, listener := range this.pipeline.Listeners {
 		this.waiter.Go(listener.Listen)
 	}
@@ -111,9 +116,9 @@ func (this *PipelineFixture) countTracked() (batchInFlight, batchComplete int) {
 	defer this.trackLock.Unlock()
 	for _, observation := range this.tracked {
 		switch observation.(type) {
-		case BatchInFlight:
+		case contracts.BatchInFlight:
 			batchInFlight++
-		case BatchComplete:
+		case contracts.BatchComplete:
 			batchComplete++
 		}
 	}

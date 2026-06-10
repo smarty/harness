@@ -1,4 +1,4 @@
-package harness
+package pipeline
 
 import (
 	"context"
@@ -129,9 +129,9 @@ func (this *PersistenceFixture) TestRetriesUntilWriteSucceeds() {
 	this.So(this.waits, should.Equal, []time.Duration{time.Second, time.Second})
 	this.So(this.tracked, should.HaveLength, 2)
 	for n, observation := range this.tracked {
-		failure, ok := observation.(PersistenceError)
+		failure, ok := observation.(contracts.PersistenceError)
 		this.So(ok, should.BeTrue)
-		this.So(failure.Error, should.WrapError, ErrPersistence)
+		this.So(failure.Error, should.WrapError, contracts.ErrPersistence)
 		this.So(failure.Attempt, should.Equal, n+1)
 	}
 }
@@ -150,11 +150,11 @@ func (this *PersistenceFixture) TestPersistenceAbandonsOnContextCancelAndDropsUn
 	this.So(len(this.writeCalls), should.Equal, 1)
 	this.So(this.waits, should.Equal, []time.Duration{time.Second})
 	this.So(this.tracked, should.HaveLength, 2)
-	failure, ok := this.tracked[0].(PersistenceError)
+	failure, ok := this.tracked[0].(contracts.PersistenceError)
 	this.So(ok, should.BeTrue)
-	this.So(failure.Error, should.WrapError, ErrPersistence)
+	this.So(failure.Error, should.WrapError, contracts.ErrPersistence)
 	this.So(failure.Attempt, should.Equal, 1)
-	this.So(this.tracked[1], should.Equal, PersistenceAbandoned{Attempts: 1})
+	this.So(this.tracked[1], should.Equal, contracts.PersistenceAbandoned{Attempts: 1})
 }
 
 func (this *PersistenceFixture) TestClosedInputClosesOutput() {

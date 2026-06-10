@@ -1,4 +1,4 @@
-package harness
+package pipeline
 
 type terminal struct {
 	input chan *unitOfWork

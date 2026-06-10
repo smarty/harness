@@ -1,4 +1,4 @@
-package harness
+package pipeline
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
+	"github.com/smarty/harness/v2/internal/contracts"
 )
 
 func TestEntrypointFixture(t *testing.T) {
@@ -61,8 +62,8 @@ func (this *EntrypointFixture) TestHandlePushesBatchAndBlocksUntilCompletion() {
 	<-done
 
 	this.So(this.tracked, should.HaveLength, 2)
-	this.So(this.tracked, should.Contain, BatchInFlight{})
-	this.So(this.tracked, should.Contain, BatchComplete{})
+	this.So(this.tracked, should.Contain, contracts.BatchInFlight{})
+	this.So(this.tracked, should.Contain, contracts.BatchComplete{})
 }
 
 func (this *EntrypointFixture) TestHandleSerializesMultipleConcurrentCalls() {
@@ -81,9 +82,9 @@ func (this *EntrypointFixture) TestHandleSerializesMultipleConcurrentCalls() {
 	var inFlight int
 	for _, observation := range this.tracked {
 		switch observation.(type) {
-		case BatchInFlight:
+		case contracts.BatchInFlight:
 			inFlight++
-		case BatchComplete:
+		case contracts.BatchComplete:
 			inFlight--
 		default:
 			this.Fatal("Unexpected observation:", observation)
@@ -111,8 +112,8 @@ func (this *EntrypointFixture) TestAwait_ReturnsAfterCompletion() {
 	item.complete()
 	<-done
 
-	this.So(this.tracked, should.Contain, BatchInFlight{})
-	this.So(this.tracked, should.Contain, BatchComplete{})
+	this.So(this.tracked, should.Contain, contracts.BatchInFlight{})
+	this.So(this.tracked, should.Contain, contracts.BatchComplete{})
 }
 
 func (this *EntrypointFixture) TestAwait_UnblocksOnContextCancelWhileWaiting() {
@@ -136,13 +137,13 @@ func (this *EntrypointFixture) TestAwait_UnblocksOnContextCancelWhileWaiting() {
 	cancel()
 	<-done
 
-	this.So(this.tracked, should.Contain, BatchInFlight{})
-	this.So(this.tracked, should.Contain, CallerDeparted{})
+	this.So(this.tracked, should.Contain, contracts.BatchInFlight{})
+	this.So(this.tracked, should.Contain, contracts.CallerDeparted{})
 
 	// The batch was NOT abandoned: the pipeline still owns it and will invoke
 	// complete() later. await must not have Put it back to the pool.
 	item.complete()
-	this.So(this.tracked, should.Contain, BatchComplete{})
+	this.So(this.tracked, should.Contain, contracts.BatchComplete{})
 }
 
 func (this *EntrypointFixture) TestAwait_UnblocksOnContextCancelWhileEnqueuing() {
@@ -168,11 +169,11 @@ func (this *EntrypointFixture) TestAwait_UnblocksOnContextCancelWhileEnqueuing()
 	cancel()
 	<-done
 
-	this.So(this.tracked, should.Contain, CallerDeparted{})
-	this.So(this.tracked, should.NOT.Contain, BatchInFlight{})
+	this.So(this.tracked, should.Contain, contracts.CallerDeparted{})
+	this.So(this.tracked, should.NOT.Contain, contracts.BatchInFlight{})
 
 	// The never-enqueued batch was abandoned and returned to the pool.
-	this.So(this.tracked, should.NOT.Contain, BatchComplete{})
+	this.So(this.tracked, should.NOT.Contain, contracts.BatchComplete{})
 }
 
 func (this *EntrypointFixture) TestAwait_DepartedInFlightDoesNotCorruptPooledWaiter() {
@@ -212,8 +213,8 @@ func (this *EntrypointFixture) TestAwait_DepartedInFlightDoesNotCorruptPooledWai
 	this.So(subject.Close(), should.BeNil)
 	<-drained
 
-	this.So(this.tracked, should.Contain, CallerDeparted{})
-	this.So(this.tracked, should.Contain, BatchComplete{})
+	this.So(this.tracked, should.Contain, contracts.CallerDeparted{})
+	this.So(this.tracked, should.Contain, contracts.BatchComplete{})
 }
 
 func (this *EntrypointFixture) TestAwait_BatchCarriesExactlyOneMessage() {
@@ -255,13 +256,13 @@ func (this *EntrypointFixture) TestAdmit_FalseAtOrAboveThreshold_TracksLoadShed(
 		work <- &batch{}
 	}
 	this.So(subject.admit(), should.BeFalse)
-	this.So(this.tracked, should.Contain, LoadShed{})
+	this.So(this.tracked, should.Contain, contracts.LoadShed{})
 }
 
 func (this *EntrypointFixture) TestAdmit_FalseWhenClosed_NoLoadShed() {
 	this.So(this.subject.Close(), should.BeNil)
 	this.So(this.subject.admit(), should.BeFalse)
-	this.So(this.tracked, should.NOT.Contain, LoadShed{})
+	this.So(this.tracked, should.NOT.Contain, contracts.LoadShed{})
 }
 
 func (this *EntrypointFixture) TestAdmit_ThresholdAtOrAboveOneDisablesWatermark() {
@@ -271,7 +272,7 @@ func (this *EntrypointFixture) TestAdmit_ThresholdAtOrAboveOneDisablesWatermark(
 		work <- &batch{}
 	}
 	this.So(subject.admit(), should.BeTrue)
-	this.So(this.tracked, should.NOT.Contain, LoadShed{})
+	this.So(this.tracked, should.NOT.Contain, contracts.LoadShed{})
 
 	this.So(subject.Close(), should.BeNil)
 	this.So(subject.admit(), should.BeFalse)
@@ -324,7 +325,7 @@ func (this *EntrypointFixture) TestHandle_DoesNotShedAtHighWatermark() {
 		<-done
 	}
 
-	this.So(this.tracked, should.NOT.Contain, LoadShed{})
+	this.So(this.tracked, should.NOT.Contain, contracts.LoadShed{})
 }
 
 func (this *EntrypointFixture) TestHandle_IgnoresContextCancel() {

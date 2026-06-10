@@ -1,4 +1,4 @@
-package harness
+package pipeline
 
 import (
 	"context"
@@ -50,14 +50,14 @@ func (this *broadcast) dispatch() {
 		if err == nil {
 			return
 		}
-		this.monitor.Track(BroadcastError{
+		this.monitor.Track(contracts.BroadcastError{
 			Attempt: attempt,
-			Error:   fmt.Errorf("%w: %w", ErrBroadcast, err),
+			Error:   fmt.Errorf("%w: %w", contracts.ErrBroadcast, err),
 		})
 		// Retries forever (until the process restarts) unless the context is cancelled.
 		// TODO: exponential backoff w/ jitter
 		if this.wait(this.ctx, time.Second) != nil {
-			this.monitor.Track(BroadcastAbandoned{Attempts: attempt})
+			this.monitor.Track(contracts.BroadcastAbandoned{Attempts: attempt})
 			return
 		}
 	}

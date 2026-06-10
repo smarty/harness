@@ -1,4 +1,4 @@
-package harness
+package pipeline
 
 import (
 	"context"
@@ -129,9 +129,9 @@ func (this *BroadcastFixture) TestRetriesUntilDispatchSucceeds() {
 	this.So(this.waits, should.Equal, []time.Duration{time.Second, time.Second})
 	this.So(this.tracked, should.HaveLength, 2)
 	for n, observation := range this.tracked {
-		failure, ok := observation.(BroadcastError)
+		failure, ok := observation.(contracts.BroadcastError)
 		this.So(ok, should.BeTrue)
-		this.So(failure.Error, should.WrapError, ErrBroadcast)
+		this.So(failure.Error, should.WrapError, contracts.ErrBroadcast)
 		this.So(failure.Attempt, should.Equal, n+1)
 	}
 }
@@ -150,11 +150,11 @@ func (this *BroadcastFixture) TestBroadcastAbandonsOnContextCancelButStillForwar
 	this.So(len(this.dispatchCalls), should.Equal, 1)
 	this.So(this.waits, should.Equal, []time.Duration{time.Second})
 	this.So(this.tracked, should.HaveLength, 2)
-	failure, ok := this.tracked[0].(BroadcastError)
+	failure, ok := this.tracked[0].(contracts.BroadcastError)
 	this.So(ok, should.BeTrue)
-	this.So(failure.Error, should.WrapError, ErrBroadcast)
+	this.So(failure.Error, should.WrapError, contracts.ErrBroadcast)
 	this.So(failure.Attempt, should.Equal, 1)
-	this.So(this.tracked[1], should.Equal, BroadcastAbandoned{Attempts: 1})
+	this.So(this.tracked[1], should.Equal, contracts.BroadcastAbandoned{Attempts: 1})
 }
 
 func (this *BroadcastFixture) TestClosedInputClosesOutput() {

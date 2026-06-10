@@ -7,6 +7,7 @@ import (
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
+	"github.com/smarty/harness/v2/internal/pipeline"
 )
 
 func TestConfigFixture(t *testing.T) {
@@ -17,8 +18,8 @@ type ConfigFixture struct {
 	*gunit.Fixture
 }
 
-func (this *ConfigFixture) apply(options ...option) Configuration {
-	var cfg Configuration
+func (this *ConfigFixture) apply(options ...option) pipeline.Configuration {
+	var cfg pipeline.Configuration
 	for _, item := range Options.defaults(options...) {
 		item(&cfg)
 	}
