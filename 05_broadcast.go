@@ -43,15 +43,15 @@ func (this *broadcast) Listen() {
 	}
 }
 func (this *broadcast) dispatch() {
-	var failure BroadcastError
 	for attempt := 1; ; attempt++ {
 		err := this.dispatcher.Dispatch(this.ctx, this.buffer...)
 		if err == nil {
 			return
 		}
-		failure.Attempt = attempt
-		failure.Error = fmt.Errorf("%w: %w", ErrBroadcast, err)
-		this.monitor.Track(failure)
+		this.monitor.Track(BroadcastError{
+			Attempt: attempt,
+			Error:   fmt.Errorf("%w: %w", ErrBroadcast, err),
+		})
 		// Retries forever (until the process restarts) unless the context is cancelled.
 		// TODO: exponential backoff w/ jitter
 		if this.wait(this.ctx, time.Second) != nil {
