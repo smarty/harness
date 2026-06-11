@@ -47,7 +47,7 @@ func (this *RecoveryFixture) Setup() {
 	this.handle = handle
 	_, err = handle.Exec(`TRUNCATE TABLE Messages;`)
 	this.So(err, should.BeNil)
-	this.dispatcher = NewDispatcher(this, handle, log.New(os.Stderr, "", 0))
+	this.dispatcher = NewDispatcher(this, handle)
 }
 
 func (this *RecoveryFixture) Teardown() {

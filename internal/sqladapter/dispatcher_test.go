@@ -5,8 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log"
-	"os"
 	"testing"
 
 	"github.com/smarty/gunit/v2"
@@ -51,7 +49,7 @@ func (this *DispatcherFixture) Setup() {
 	this.handle = handle
 	_, err = handle.Exec(`TRUNCATE TABLE Messages;`)
 	this.So(err, should.BeNil)
-	this.subject = NewDispatcher(this, handle, log.New(os.Stderr, "", 0))
+	this.subject = NewDispatcher(this, handle)
 }
 
 func (this *DispatcherFixture) Teardown() {

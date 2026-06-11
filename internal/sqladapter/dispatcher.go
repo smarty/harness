@@ -17,14 +17,12 @@ import (
 type Dispatcher struct {
 	inner  contracts.Dispatcher
 	handle *sql.DB
-	logger Logger
 }
 
-func NewDispatcher(inner contracts.Dispatcher, handle *sql.DB, logger Logger) *Dispatcher {
+func NewDispatcher(inner contracts.Dispatcher, handle *sql.DB) *Dispatcher {
 	return &Dispatcher{
 		inner:  inner,
 		handle: handle,
-		logger: logger,
 	}
 }
 
@@ -37,8 +35,8 @@ func (this *Dispatcher) Dispatch(ctx context.Context, messages ...*contracts.Mes
 	}
 
 	var statement strings.Builder // TODO: reuse statement builder
-	statement.WriteString(`UPDATE Messages SET dispatched = NOW(3) WHERE id IN (`)
-	args := make([]any, 0, len(messages))
+	statement.WriteString(`UPDATE Messages SET dispatched = NOW(3) WHERE dispatched IS NULL AND id IN (`)
+	args := make([]any, 0, len(messages)) // TODO: reuse args buffer
 	for i, message := range messages {
 		if i > 0 {
 			statement.WriteString(`,`)
