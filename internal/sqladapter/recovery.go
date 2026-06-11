@@ -15,12 +15,11 @@ import (
 //
 // TODO: make this a Listener so it doesn't prevent startup (and so that regular publishing can happen concurrently)
 func Recover(ctx context.Context, handle *sql.DB, dispatcher *Dispatcher, logger Logger, batchSize int) error {
-	logger.Printf("[INFO] Recovering undispatched message(s) from previous run...")
 	rows, err := handle.QueryContext(ctx, `
 		SELECT id, type, payload
 		  FROM Messages
 		 WHERE dispatched IS NULL
-		 ORDER BY id`)
+		 ORDER BY id;`)
 	if err != nil {
 		return err
 	}
@@ -58,9 +57,13 @@ func Recover(ctx context.Context, handle *sql.DB, dispatcher *Dispatcher, logger
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if len(messages) > 0 {
-		err = dispatcher.Dispatch(ctx, messages...)
+	if len(messages) == 0 {
+		return nil
 	}
-	logger.Printf("[INFO] Recovering %d total undispatched message(s) from previous run.", total)
-	return err
+	err = dispatcher.Dispatch(ctx, messages...)
+	if err != nil {
+		return err
+	}
+	logger.Printf("[INFO] Recovered %d total undispatched message(s) from previous run.", total)
+	return nil
 }
