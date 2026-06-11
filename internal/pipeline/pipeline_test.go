@@ -11,7 +11,7 @@ import (
 	"github.com/smarty/gunit/v2/assert/better"
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/contracts"
-	"github.com/smarty/harness/v2/monitoring"
+	"github.com/smarty/harness/v2/contracts/monitoring"
 )
 
 func TestPipelineFixture(t *testing.T) {

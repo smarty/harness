@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/smarty/harness/v2/contracts"
-	"github.com/smarty/harness/v2/monitoring"
+	"github.com/smarty/harness/v2/contracts/monitoring"
 )
 
 type serialization struct {

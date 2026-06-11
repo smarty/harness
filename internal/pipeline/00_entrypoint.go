@@ -5,8 +5,8 @@ import (
 	"sync"
 
 	"github.com/smarty/harness/v2/contracts"
+	"github.com/smarty/harness/v2/contracts/monitoring"
 	"github.com/smarty/harness/v2/internal/generic"
-	"github.com/smarty/harness/v2/monitoring"
 )
 
 type entrypoint struct {

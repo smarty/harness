@@ -9,7 +9,7 @@ import (
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
-	"github.com/smarty/harness/v2/monitoring"
+	"github.com/smarty/harness/v2/contracts/monitoring"
 )
 
 func TestEntrypointFixture(t *testing.T) {
