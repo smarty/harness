@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/contracts/monitoring"
@@ -69,8 +68,7 @@ func (this *broadcast) dispatch() {
 			Error:   fmt.Errorf("%w: %w", monitoring.ErrBroadcast, err),
 		})
 		// Retries forever (until the process restarts) unless the context is cancelled.
-		// TODO: exponential backoff w/ jitter
-		if this.wait(this.ctx, time.Second) != nil {
+		if this.wait(this.ctx, backoff(attempt)) != nil {
 			this.monitor.Track(monitoring.BroadcastAbandoned{Attempts: attempt})
 			return
 		}

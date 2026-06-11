@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proposal: Capped Exponential Backoff with Jitter for Pipeline Retries</title>
+<style>
+  body { font-family: Georgia, 'Times New Roman', serif; max-width: 56rem; margin: 2rem auto; padding: 0 1.5rem; line-height: 1.6; color: #222; }
+  h1, h2, h3 { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1a3a5c; }
+  h1 { border-bottom: 3px solid #1a3a5c; padding-bottom: .4rem; }
+  h2 { border-bottom: 1px solid #ccd; padding-bottom: .2rem; margin-top: 2.2rem; }
+  code, pre { font-family: 'SF Mono', Menlo, Consolas, monospace; background: #f4f6f8; border-radius: 4px; }
+  code { padding: .1em .35em; font-size: .92em; }
+  pre { padding: 1rem; overflow-x: auto; border: 1px solid #dde; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  th, td { border: 1px solid #bcd; padding: .4rem .8rem; text-align: left; }
+  th { background: #eef3f8; font-family: 'Helvetica Neue', Arial, sans-serif; }
+  .your-turn { background: #fff8e6; border: 2px solid #e0b84c; border-radius: 8px; padding: .5rem 1.5rem 1rem; margin: 2rem 0; }
+  .your-turn h2 { border: none; color: #8a6d1a; }
+  .tradeoff { background: #f6f0f8; border-left: 4px solid #9a6cb0; padding: .5rem 1rem; margin: 1rem 0; }
+  li { margin: .25rem 0; }
+  .phase { background: #f0f6f0; border-left: 4px solid #5a8a5a; padding: .5rem 1rem; margin: 1.2rem 0; }
+  .phase h3 { margin-top: .4rem; color: #2f5a2f; }
+</style>
+</head>
+<body>
+
+<h1>Capped Exponential Backoff with Jitter for Pipeline Retries</h1>
+<p><em>2026-06-11 &mdash; github.com/smarty/harness</em></p>
+
+<h2>Background</h2>
+<p>Two TODOs remain in the repository, both marking the same gap:</p>
+<table>
+  <tr><th>Location                              </th><th>Retry loop          </th><th>Current behavior            </th></tr>
+  <tr><td><code>internal/pipeline/03_persistence.go:59</code></td><td><code>persistence.store()</code></td><td>flat 1s wait between attempts</td></tr>
+  <tr><td><code>internal/pipeline/05_broadcast.go:72</code>  </td><td><code>broadcast.dispatch()</code></td><td>flat 1s wait between attempts</td></tr>
+</table>
+<p>Both loops retry forever (by design &mdash; until context cancellation). A flat 1-second delay hammers a struggling dependency (database, message broker) and, with many harness instances, produces synchronized retry storms. Exponential backoff eases pressure; jitter de-synchronizes the fleet; and a <strong>cap</strong> ensures the delay never grows so long that a recovered dependency sits idle while the pipeline stays clogged waiting out a huge sleep.</p>
+<p>Note: <code>recovery.go:58</code> contains an identical flat-1s retry loop without a TODO. For consistency, this proposal applies the same backoff there too (cheap once the helper exists). Easy to drop if you'd rather keep scope to the two TODOs.</p>
+
+<h2>Approach</h2>
+<p>Add a small, pure, deterministic-given-its-inputs <code>backoff</code> function next to the existing <code>wait</code> helper in <code>internal/pipeline/retry.go</code>, then replace <code>time.Second</code> at the three call sites with <code>backoff(attempt)</code>. No contract changes; <code>contracts.Waiter</code> stays as-is, and the existing test fixtures (which record the durations passed to their injected <code>wait</code>) keep working &mdash; assertions just become range-based.</p>
+
+<h3>Algorithm: capped exponential with equal jitter</h3>
+<pre><code>// backoff returns the delay before the next retry: exponential growth from
+// base, capped at max, with "equal jitter" (uniform in [d/2, d)) to
+// de-synchronize concurrent retriers while guaranteeing a floor.
+func backoff(attempt int) time.Duration
+</code></pre>
+<table>
+  <tr><th>Parameter</th><th>Value             </th><th>Rationale                                              </th></tr>
+  <tr><td>base     </td><td><code>1 * time.Second</code> </td><td>matches current behavior on first retry        </td></tr>
+  <tr><td>cap      </td><td><code>30 * time.Second</code></td><td>retries resume regularly; pipeline never stalls &gt; 30s past recovery</td></tr>
+  <tr><td>growth   </td><td>&times;2 per attempt</td><td>standard; reaches the cap by attempt 6                </td></tr>
+  <tr><td>jitter   </td><td>equal jitter: <code>d/2 + rand(d/2)</code></td><td>bounded below (unlike full jitter), so retry cadence stays predictable</td></tr>
+</table>
+<p>Resulting delay windows:</p>
+<table>
+  <tr><th>Attempt</th><th>Uncapped</th><th>Jittered range </th></tr>
+  <tr><td>1      </td><td>1s      </td><td>[0.5s, 1s)     </td></tr>
+  <tr><td>2      </td><td>2s      </td><td>[1s, 2s)       </td></tr>
+  <tr><td>3      </td><td>4s      </td><td>[2s, 4s)       </td></tr>
+  <tr><td>4      </td><td>8s      </td><td>[4s, 8s)       </td></tr>
+  <tr><td>5      </td><td>16s     </td><td>[8s, 16s)      </td></tr>
+  <tr><td>6+     </td><td>30s (cap)</td><td>[15s, 30s)    </td></tr>
+</table>
+<p>Implementation notes:</p>
+<ul>
+  <li>Use <code>math/rand/v2</code> (<code>rand.Int64N</code>) &mdash; no seeding ceremony, concurrency-safe.</li>
+  <li>Guard the shift against overflow: compute <code>min(cap, base&lt;&lt;(attempt-1))</code> by clamping the shift count (attempt &ge; 6 &rArr; already at cap; attempt &gt; ~32 must not wrap).</li>
+  <li>Call sites change from <code>this.wait(this.ctx, time.Second)</code> to <code>this.wait(this.ctx, backoff(attempt))</code> &mdash; the TODO comments are deleted.</li>
+</ul>
+
+<h2>Trade-offs</h2>
+<div class="tradeoff">
+<ul>
+  <li><strong>Unexported, hard-coded constants.</strong> Base/cap are not configurable. This matches the repo's style (the flat 1s was hard-coded too) and avoids contract churn. If operators later need tuning, the function signature can grow without touching contracts.</li>
+  <li><strong>Tests become range assertions.</strong> Because jitter is random, fixtures assert each recorded wait falls within its <code>[d/2, d)</code> window rather than <code>should.Equal, time.Second</code>. Alternative &mdash; injecting a rand source &mdash; buys exactness at the cost of another constructor parameter through three stages; not worth it.</li>
+  <li><strong>Equal jitter vs. full jitter.</strong> Full jitter (uniform in <code>[0, d)</code>) spreads load slightly better in huge fleets but can produce near-zero delays, defeating the back-off. Equal jitter's floor fits the "retry regularly but don't hammer" goal here.</li>
+  <li><strong>Recovery scope creep.</strong> Including <code>recovery.go</code> goes beyond the two TODOs. It's the same pattern and the same one-line fix; flagging it so you can veto.</li>
+</ul>
+</div>
+
+<div class="your-turn">
+<h2>🧑‍💻 Your Turn: implement <code>backoff</code></h2>
+<p>The core of this change is the <code>backoff</code> function itself &mdash; small, pure, and the only piece with real logic (exponentiation, overflow-safe capping, jitter math). You write it; the agent will have the failing tests waiting (Phase 1 below), wire up the call sites, and update the stage fixtures.</p>
+<p><strong>Where:</strong> <code>internal/pipeline/retry.go</code></p>
+<p><strong>Signature:</strong></p>
+<pre><code>func backoff(attempt int) time.Duration</code></pre>
+<p><strong>Behavior to satisfy (the tests in <code>retry_test.go</code> will check all of these):</strong></p>
+<ul>
+  <li>Attempt 1 yields a duration in <code>[500ms, 1s)</code>; attempt n doubles the window up to the cap.</li>
+  <li>Attempt 6 and beyond always yields a duration in <code>[15s, 30s)</code> &mdash; including absurd values like <code>attempt = 1&lt;&lt;30</code> (no overflow, no negative durations).</li>
+  <li>Attempt &le; 0 is treated as attempt 1 (defensive; the loops start at 1).</li>
+  <li>Repeated calls with the same attempt produce varying values (jitter is real, not constant).</li>
+</ul>
+<p><strong>Hints:</strong> <code>math/rand/v2</code>'s <code>rand.Int64N(n)</code> returns uniform <code>[0, n)</code>; clamp the shift count before shifting (<code>time.Duration</code> is an <code>int64</code> of nanoseconds &mdash; <code>1s &lt;&lt; 35</code> overflows). Remember house style: no blank lines at function start/end, name the return <code>result</code> if you use a named return.</p>
+</div>
+
+<h2>Implementation Checklist</h2>
+
+<div class="phase">
+<h3>Phase 1 — backoff function (TDD; "your turn" lives here)</h3>
+<ul>
+  <li>☑ <strong>Agent:</strong> add a <code>BackoffFixture</code> to <code>internal/pipeline/retry_test.go</code> covering: range for attempts 1&ndash;6, cap behavior for large attempts (incl. overflow-prone values), attempt &le; 0 handling, and jitter variability across repeated calls.</li>
+  <li>☑ <strong>Agent:</strong> run <code>go test ./internal/pipeline/... | tail -50</code> &mdash; confirm failure for the right reason (undefined: <code>backoff</code>).</li>
+  <li>☑ <strong>User:</strong> implement <code>backoff</code> in <code>internal/pipeline/retry.go</code> per the Your Turn section.</li>
+  <li>☑ <strong>Both:</strong> run <code>go test ./internal/pipeline/... | tail -50</code> &mdash; confirm green.</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase 2 — persistence stage</h3>
+<ul>
+  <li>☑ Update <code>TestRetriesUntilWriteSucceeds</code> and <code>TestPersistenceAbandonsOnContextCancelAndDropsUnit</code> in <code>03_persistence_test.go</code>: recorded waits must fall in the per-attempt jitter windows instead of equaling <code>time.Second</code>.</li>
+  <li>☑ Run tests &mdash; confirm red (production still passes flat 1s... first attempt's window <code>[500ms,1s)</code> excludes 1s, so the assertion genuinely fails).</li>
+  <li>☑ Replace <code>time.Second</code> with <code>backoff(attempt)</code> in <code>persistence.store()</code>; delete the TODO comment.</li>
+  <li>☑ Run tests &mdash; confirm green.</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase 3 — broadcast stage</h3>
+<ul>
+  <li>☑ Update the corresponding retry/abandon tests in <code>05_broadcast_test.go</code> to range assertions. (Also extracted a shared <code>assertBackoffWaits</code> test helper into <code>retry_test.go</code>; persistence test now uses it too. Caught and fixed an off-by-one in a post-green refactor of <code>backoff</code>.)</li>
+  <li>☑ Run tests &mdash; confirm red.</li>
+  <li>☑ Replace <code>time.Second</code> with <code>backoff(attempt)</code> in <code>broadcast.dispatch()</code>; delete the TODO comment.</li>
+  <li>☑ Run tests &mdash; confirm green.</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase 4 — recovery stage (optional; veto if undesired)</h3>
+<ul>
+  <li>☑ Update retry-wait assertions in <code>recovery_test.go</code> to range assertions; confirm red.</li>
+  <li>☑ Replace <code>time.Second</code> with <code>backoff(attempt)</code> in <code>Recovery.recover()</code>; confirm green.</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase 5 — finishing</h3>
+<ul>
+  <li>☑ Run <code>make test | tail -50</code> (full suite with <code>-race</code>, fmt, tidy) &mdash; pipeline package at 100% coverage.</li>
+  <li>☑ Verify zero remaining TODOs: <code>grep -rn TODO --include='*.go' .</code> &mdash; no matches.</li>
+</ul>
+</div>
+
+</body>
+</html>

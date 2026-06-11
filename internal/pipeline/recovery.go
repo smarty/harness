@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"time"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/contracts/monitoring"
@@ -55,7 +54,7 @@ func (this *Recovery) recover() []*contracts.Message {
 		}
 		this.monitor.Track(monitoring.RecoveryError{Attempts: attempt, Error: err})
 
-		if this.wait(this.ctx, time.Second) != nil {
+		if this.wait(this.ctx, backoff(attempt)) != nil {
 			return nil
 		}
 	}

@@ -130,7 +130,7 @@ func (this *BroadcastFixture) TestRetriesUntilDispatchSucceeds() {
 	units := this.drain()
 	this.So(len(units), should.Equal, 1)
 	this.So(len(this.dispatchCalls), should.Equal, 3)
-	this.So(this.waits, should.Equal, []time.Duration{time.Second, time.Second})
+	assertBackoffWaits(this.Fixture, this.waits, 2)
 	this.So(this.tracked, should.HaveLength, 2)
 	for n, observation := range this.tracked {
 		failure, ok := observation.(monitoring.BroadcastError)
@@ -152,7 +152,7 @@ func (this *BroadcastFixture) TestBroadcastAbandonsOnContextCancelButStillForwar
 	units := this.drain()
 	this.So(units, should.Equal, []*unitOfWork{unit})
 	this.So(len(this.dispatchCalls), should.Equal, 1)
-	this.So(this.waits, should.Equal, []time.Duration{time.Second})
+	assertBackoffWaits(this.Fixture, this.waits, 1)
 	this.So(this.tracked, should.HaveLength, 2)
 	failure, ok := this.tracked[0].(monitoring.BroadcastError)
 	this.So(ok, should.BeTrue)

@@ -127,7 +127,7 @@ func (this *PersistenceFixture) TestRetriesUntilWriteSucceeds() {
 	units := this.drain()
 	this.So(len(units), should.Equal, 1)
 	this.So(len(this.writeCalls), should.Equal, 3)
-	this.So(this.waits, should.Equal, []time.Duration{time.Second, time.Second})
+	assertBackoffWaits(this.Fixture, this.waits, 2)
 	this.So(this.tracked, should.HaveLength, 2)
 	for n, observation := range this.tracked {
 		failure, ok := observation.(monitoring.PersistenceError)
@@ -149,7 +149,7 @@ func (this *PersistenceFixture) TestPersistenceAbandonsOnContextCancelAndDropsUn
 	units := this.drain()
 	this.So(units, should.BeEmpty)
 	this.So(len(this.writeCalls), should.Equal, 1)
-	this.So(this.waits, should.Equal, []time.Duration{time.Second})
+	assertBackoffWaits(this.Fixture, this.waits, 1)
 	this.So(this.tracked, should.HaveLength, 2)
 	failure, ok := this.tracked[0].(monitoring.PersistenceError)
 	this.So(ok, should.BeTrue)
