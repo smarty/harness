@@ -22,6 +22,10 @@ type (
 		Error   error
 	}
 	BroadcastAbandoned struct{ Attempts int }
+	RecoveryError      struct {
+		Attempts int
+		Error    error
+	}
 )
 
 var (

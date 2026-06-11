@@ -3,9 +3,8 @@ package sqladapter
 import (
 	"context"
 	"database/sql"
-	"log"
-	"os"
 	"testing"
+	"time"
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
@@ -22,36 +21,40 @@ func TestRecoveryFixture(t *testing.T) {
 
 type RecoveryFixture struct {
 	*gunit.Fixture
-	ctx           context.Context
-	handle        *sql.DB
-	dispatcher    *Dispatcher
-	dispatcherErr error
-	dispatched    []*contracts.Message
-	writeBatches  []int
-}
-
-func (this *RecoveryFixture) Dispatch(ctx context.Context, messages ...*contracts.Message) error {
-	this.So(ctx.Value("testing"), should.Equal, this.Name())
-	this.dispatched = append(this.dispatched, messages...)
-	this.writeBatches = append(this.writeBatches, len(messages))
-	return this.dispatcherErr
+	ctx     context.Context
+	handle  *sql.DB
+	output  chan *contracts.Message
+	waits   []time.Duration
+	waitErr error
+	tracked []any
+	subject *Recovery
 }
 
 func (this *RecoveryFixture) Setup() {
 	this.ctx = context.WithValue(this.Context(), "testing", this.Name())
-	this.dispatched = nil
-	this.writeBatches = nil
-	this.dispatcherErr = nil
+	this.output = make(chan *contracts.Message, 64)
+	this.waits = nil
+	this.waitErr = nil
+	this.tracked = nil
 	handle, err := openTestDatabase()
 	this.So(err, should.BeNil)
 	this.handle = handle
 	_, err = handle.Exec(`TRUNCATE TABLE Messages;`)
 	this.So(err, should.BeNil)
-	this.dispatcher = NewDispatcher(this, handle)
+	this.subject = NewRecovery(this.ctx, handle, this.output, this.wait, this)
 }
 
 func (this *RecoveryFixture) Teardown() {
 	_ = this.handle.Close()
+}
+
+func (this *RecoveryFixture) wait(_ context.Context, d time.Duration) error {
+	this.waits = append(this.waits, d)
+	return this.waitErr
+}
+
+func (this *RecoveryFixture) Track(observation any) {
+	this.tracked = append(this.tracked, observation)
 }
 
 func (this *RecoveryFixture) seedUndispatched(typeName string, payload string) uint64 {
@@ -70,92 +73,84 @@ func (this *RecoveryFixture) seedDispatched(typeName string, payload string) uin
 	return uint64(id)
 }
 
-func (this *RecoveryFixture) TestRecover_NoOrphans_NoOp() {
-	err := Recover(this.ctx, this.handle, this.dispatcher, log.New(os.Stderr, "", 0), 1024)
-
-	this.So(err, should.BeNil)
-	this.So(len(this.dispatched), should.Equal, 0)
+func (this *RecoveryFixture) receivedMessages() (results []*contracts.Message) {
+	for {
+		select {
+		case message := <-this.output:
+			results = append(results, message)
+		default:
+			return results
+		}
+	}
 }
 
-func (this *RecoveryFixture) TestRecover_DispatchesUndispatchedRowsInIDOrder() {
+func (this *RecoveryFixture) TestListen_NoOrphans_NoOp() {
+	this.subject.Listen()
+
+	this.So(this.receivedMessages(), should.BeEmpty)
+	this.So(this.waits, should.BeEmpty)
+	this.So(this.tracked, should.BeEmpty)
+}
+
+func (this *RecoveryFixture) TestListen_FeedsUndispatchedRowsToChannelInIDOrder() {
 	id1 := this.seedUndispatched("order-received", `{"order":1}`)
 	id2 := this.seedUndispatched("order-approved", `{"order":2}`)
 	_ = this.seedDispatched("order-received", `{"order":3}`) // already dispatched, must be skipped
 
-	err := Recover(this.ctx, this.handle, this.dispatcher, log.New(os.Stderr, "", 0), 1024)
+	this.subject.Listen()
 
-	this.So(err, should.BeNil)
-	this.So(len(this.dispatched), should.Equal, 2)
-	this.So(this.dispatchedTimestamp(id1), should.NOT.BeNil)
-	this.So(this.dispatchedTimestamp(id2), should.NOT.BeNil)
+	messages := this.receivedMessages()
+	this.So(len(messages), should.Equal, 2)
+	this.So(messages[0].ID, should.Equal, id1)
+	this.So(messages[1].ID, should.Equal, id2)
+	this.So(this.tracked, should.BeEmpty)
 }
 
-func (this *RecoveryFixture) TestRecover_PassesPayloadAndTypeIntoMessage() {
-	this.seedUndispatched("order-received", `{"order":1}`)
+func (this *RecoveryFixture) TestListen_PassesPayloadAndTypeIntoMessage() {
+	id := this.seedUndispatched("order-received", `{"order":1}`)
 
-	err := Recover(this.ctx, this.handle, this.dispatcher, log.New(os.Stderr, "", 0), 1024)
+	this.subject.Listen()
 
-	this.So(err, should.BeNil)
-	this.So(len(this.dispatched), should.Equal, 1)
-	message := this.dispatched[0]
-	this.So(message.ID, should.Equal, 1)
+	messages := this.receivedMessages()
+	this.So(len(messages), should.Equal, 1)
+	message := messages[0]
+	this.So(message.ID, should.Equal, id)
 	this.So(message.Type, should.Equal, "order-received")
 	this.So(message.ContentType, should.Equal, "application/json")
 	this.So(message.Content.Bytes(), should.Equal, []byte(`{"order":1}`))
 	this.So(message.Value, should.BeNil)
 }
 
-func (this *RecoveryFixture) TestRecover_PublishesDispatchWithTopicMessageTypeAndPayload() {
-	this.seedUndispatched("order-received", `{"order":1}`)
+func (this *RecoveryFixture) TestListen_QueryError_TracksErrorAndRetries() {
+	_ = this.handle.Close() // force query errors
+	calls := 0
+	this.subject = NewRecovery(this.ctx, this.handle, this.output, func(ctx context.Context, d time.Duration) error {
+		this.waits = append(this.waits, d)
+		calls++
+		if calls == 2 {
+			return context.Canceled // stop the retry loop
+		}
+		return nil
+	}, this)
 
-	err := Recover(this.ctx, this.handle, this.dispatcher, log.New(os.Stderr, "", 0), 1024)
+	this.subject.Listen()
 
-	this.So(err, should.BeNil)
-	this.So(len(this.dispatched), should.Equal, 1)
-	message := this.dispatched[0]
-	this.So(message.Type, should.Equal, "order-received")
-	this.So(message.ContentType, should.Equal, "application/json")
-	this.So(message.Content.Bytes(), should.Equal, []byte(`{"order":1}`))
-	this.So(message.Value, should.BeNil)
+	this.So(this.receivedMessages(), should.BeEmpty)
+	this.So(this.waits, should.Equal, []time.Duration{time.Second, time.Second})
+	this.So(len(this.tracked), should.Equal, 1)
+	tracked, ok := this.tracked[0].(contracts.RecoveryError)
+	this.So(ok, should.BeTrue)
+	this.So(tracked.Attempts, should.Equal, 1)
+	this.So(tracked.Error, should.NOT.BeNil)
 }
 
-func (this *RecoveryFixture) TestRecover_RowsExceedBatchSize_FlushesInBatchesAndDispatchesAll() {
-	const batchSize = 3
-	const total = 7 // 3 + 3 + 1
-	ids := make([]uint64, 0, total)
-	for i := 0; i < total; i++ {
-		ids = append(ids, this.seedUndispatched("order-received", `{}`))
-	}
+func (this *RecoveryFixture) TestListen_QueryError_ContextCanceledDuringWait_Abandons() {
+	_ = this.handle.Close() // force query errors
+	this.waitErr = context.Canceled
 
-	err := Recover(this.ctx, this.handle, this.dispatcher, log.New(os.Stderr, "", 0), batchSize)
+	this.subject.Listen()
 
-	this.So(err, should.BeNil)
-	this.So(len(this.dispatched), should.Equal, total)
-	for _, id := range ids {
-		this.So(this.dispatchedTimestamp(id), should.NOT.BeNil)
-	}
-}
-
-func (this *RecoveryFixture) TestRecover_RowCountIsMultipleOfBatchSize_FlushesUniformBatches() {
-	const batchSize = 3
-	const total = 6 // exactly 2 batches of 3
-	for i := 0; i < total; i++ {
-		this.seedUndispatched("order-received", `{}`)
-	}
-
-	err := Recover(this.ctx, this.handle, this.dispatcher, log.New(os.Stderr, "", 0), batchSize)
-
-	this.So(err, should.BeNil)
-	this.So(this.writeBatches, should.Equal, []int{3, 3})
-}
-
-func (this *RecoveryFixture) dispatchedTimestamp(id uint64) *string {
-	var dispatched sql.NullString
-	err := this.handle.QueryRow(`SELECT dispatched FROM Messages WHERE id = ?`, id).Scan(&dispatched)
-	this.So(err, should.BeNil)
-	if dispatched.Valid {
-		s := dispatched.String
-		return &s
-	}
-	return nil
+	this.So(this.receivedMessages(), should.BeEmpty)
+	this.So(this.waits, should.Equal, []time.Duration{time.Second})
+	this.So(this.tracked, should.BeEmpty) // wait failed before the error was tracked
 }
