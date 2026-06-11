@@ -43,9 +43,15 @@ type (
 		Serialize(out io.Writer, in any) error
 		ContentType() string
 	}
+	// Writer persists messages. The supplied messages are pooled and recycled
+	// after Write returns; implementations must fully consume them before
+	// returning and must not retain references to them or their Content.
 	Writer interface {
 		Write(ctx context.Context, messages ...*Message) error
 	}
+	// Dispatcher publishes messages. The supplied messages are pooled and
+	// recycled after Dispatch returns; implementations must fully consume them
+	// before returning and must not retain references to them or their Content.
 	Dispatcher interface {
 		Dispatch(ctx context.Context, messages ...*Message) error
 	}
@@ -56,6 +62,7 @@ type (
 )
 
 // Message represents a record to be saved or loaded to/from the Messages database table.
+// Pointers to this struct are often pooled and reused, so any consumer must NOT retain long-lived references.
 type Message struct {
 	// ID represents the unique ID of this message and its sequential place within a larger stream.
 	ID uint64

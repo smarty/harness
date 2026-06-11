@@ -11,6 +11,7 @@ import (
 type Recovery struct {
 	ctx       context.Context
 	recoverer contracts.Recoverer
+	batchSize int
 	output    chan *unitOfWork
 	wait      contracts.Waiter
 	monitor   contracts.Monitor
@@ -19,6 +20,7 @@ type Recovery struct {
 func newRecovery(
 	ctx context.Context,
 	recoverer contracts.Recoverer,
+	batchSize int,
 	output chan *unitOfWork,
 	wait contracts.Waiter,
 	monitor contracts.Monitor,
@@ -26,6 +28,7 @@ func newRecovery(
 	return &Recovery{
 		ctx:       ctx,
 		recoverer: recoverer,
+		batchSize: batchSize,
 		output:    output,
 		wait:      wait,
 		monitor:   monitor,
@@ -34,7 +37,12 @@ func newRecovery(
 
 func (this *Recovery) Listen() {
 	defer close(this.output)
+
 	if messages := this.recover(); len(messages) > 0 {
+		for len(messages) > this.batchSize {
+			this.output <- &unitOfWork{results: messages[:this.batchSize]}
+			messages = messages[this.batchSize:]
+		}
 		this.output <- &unitOfWork{results: messages}
 	}
 }

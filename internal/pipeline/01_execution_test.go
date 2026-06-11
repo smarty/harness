@@ -1,11 +1,13 @@
 package pipeline
 
 import (
+	"bytes"
 	"sync"
 	"testing"
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
+	"github.com/smarty/harness/v2/contracts"
 )
 
 func TestExecutionFixture(t *testing.T) {
@@ -25,10 +27,17 @@ type ExecutionFixture struct {
 	tracked []any
 }
 
+func (this *ExecutionFixture) getUnit() *unitOfWork {
+	return new(unitOfWork)
+}
+func (this *ExecutionFixture) getMessage() *contracts.Message {
+	return &contracts.Message{Content: bytes.NewBuffer(nil)}
+}
+
 func (this *ExecutionFixture) Setup() {
 	this.input = make(chan *batch, 8)
 	this.output = make(chan *unitOfWork, 8)
-	this.subject = newExecution(this, 64, this.input, this.output, this)
+	this.subject = newExecution(this, 64, this.getUnit, this.getMessage, this.input, this.output, this)
 }
 
 func (this *ExecutionFixture) Execute(message any, broadcast func(...any)) {
@@ -56,7 +65,7 @@ func (this *ExecutionFixture) drain() (results []*unitOfWork) {
 
 func (this *ExecutionFixture) TestSingleBatchProducesUnitOfWork() {
 	this.executeOutputs = [][]any{{"result-A"}}
-	this.input <- &batch{messages: []any{"msg-A"}, complete: func() {}}
+	this.input <- &batch{instructions: []any{"msg-A"}, complete: func() {}}
 	close(this.input)
 
 	go this.subject.Listen()
@@ -71,12 +80,12 @@ func (this *ExecutionFixture) TestSingleBatchProducesUnitOfWork() {
 
 func (this *ExecutionFixture) TestUnitFlushesWhenMaxUnitSizeReached() {
 	this.executeOutputs = [][]any{{"r1"}, {"r2"}, {"r3"}}
-	this.input <- &batch{messages: []any{"m1"}, complete: func() {}}
-	this.input <- &batch{messages: []any{"m2"}, complete: func() {}}
-	this.input <- &batch{messages: []any{"m3"}, complete: func() {}}
+	this.input <- &batch{instructions: []any{"m1"}, complete: func() {}}
+	this.input <- &batch{instructions: []any{"m2"}, complete: func() {}}
+	this.input <- &batch{instructions: []any{"m3"}, complete: func() {}}
 	close(this.input)
 
-	this.subject = newExecution(this, 2, this.input, this.output, this)
+	this.subject = newExecution(this, 2, this.getUnit, this.getMessage, this.input, this.output, this)
 	go this.subject.Listen()
 
 	units := this.drain()
@@ -87,7 +96,7 @@ func (this *ExecutionFixture) TestUnitFlushesWhenMaxUnitSizeReached() {
 }
 
 func (this *ExecutionFixture) TestEmptyExecutorOutputProducesUnitWithNoResults() {
-	this.input <- &batch{messages: []any{"silent"}, complete: func() {}}
+	this.input <- &batch{instructions: []any{"silent"}, complete: func() {}}
 	close(this.input)
 
 	go this.subject.Listen()
@@ -100,7 +109,7 @@ func (this *ExecutionFixture) TestEmptyExecutorOutputProducesUnitWithNoResults()
 
 func (this *ExecutionFixture) TestExecutorBroadcastsMultipleResults() {
 	this.executeOutputs = [][]any{{"r1", "r2", "r3"}}
-	this.input <- &batch{messages: []any{"msg"}, complete: func() {}}
+	this.input <- &batch{instructions: []any{"msg"}, complete: func() {}}
 	close(this.input)
 
 	go this.subject.Listen()

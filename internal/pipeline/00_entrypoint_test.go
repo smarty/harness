@@ -50,7 +50,7 @@ func (this *EntrypointFixture) TestHandlePushesBatchAndBlocksUntilCompletion() {
 	}()
 
 	item := <-this.work
-	this.So(item.messages, should.Equal, []any{"msg-1", "msg-2"})
+	this.So(item.instructions, should.Equal, []any{"msg-1", "msg-2"})
 
 	select {
 	case <-done:
@@ -101,7 +101,7 @@ func (this *EntrypointFixture) TestAwait_ReturnsAfterCompletion() {
 	}()
 
 	item := <-this.work
-	this.So(item.messages, should.Equal, []any{"msg"})
+	this.So(item.instructions, should.Equal, []any{"msg"})
 
 	select {
 	case <-done:
@@ -221,8 +221,8 @@ func (this *EntrypointFixture) TestAwait_BatchCarriesExactlyOneMessage() {
 	go this.subject.await(this.ctx, "only")
 
 	item := <-this.work
-	this.So(item.messages, should.HaveLength, 1)
-	this.So(item.messages[0], should.Equal, "only")
+	this.So(item.instructions, should.HaveLength, 1)
+	this.So(item.instructions[0], should.Equal, "only")
 
 	item.complete()
 }
@@ -371,8 +371,8 @@ func (this *EntrypointFixture) TestHandle_PreservesVariadicMessages() {
 	go this.subject.Handle(this.ctx, "a", "b", "c")
 
 	item := <-this.work
-	this.So(item.messages, should.HaveLength, 3)
-	this.So(item.messages, should.Equal, []any{"a", "b", "c"})
+	this.So(item.instructions, should.HaveLength, 3)
+	this.So(item.instructions, should.Equal, []any{"a", "b", "c"})
 
 	item.complete()
 }

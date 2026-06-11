@@ -18,8 +18,8 @@ type (
 // Unexported value types shared across pipeline stages.
 type (
 	batch struct {
-		messages []any
-		complete func()
+		instructions []any
+		complete     func()
 	}
 	unitOfWork struct {
 		results     []*contracts.Message

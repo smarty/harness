@@ -1,23 +1,33 @@
 package pipeline
 
 import (
-	"bytes"
-
 	"github.com/smarty/harness/v2/contracts"
 )
 
 type execution struct {
 	monitor     contracts.Monitor
 	maxUnitSize int
+	newUnit     func() *unitOfWork
+	newMessage  func() *contracts.Message
 	input       chan *batch
 	output      chan *unitOfWork
 	executor    executor
 }
 
-func newExecution(monitor contracts.Monitor, maxUnitSize int, input chan *batch, output chan *unitOfWork, exec executor) *execution {
+func newExecution(
+	monitor contracts.Monitor,
+	maxUnitSize int,
+	newUnit func() *unitOfWork,
+	newMessage func() *contracts.Message,
+	input chan *batch,
+	output chan *unitOfWork,
+	exec executor,
+) *execution {
 	return &execution{
 		monitor:     monitor,
 		maxUnitSize: maxUnitSize,
+		newUnit:     newUnit,
+		newMessage:  newMessage,
 		input:       input,
 		output:      output,
 		executor:    exec,
@@ -27,17 +37,23 @@ func newExecution(monitor contracts.Monitor, maxUnitSize int, input chan *batch,
 func (this *execution) Listen() {
 	defer close(this.output)
 
-	var unit *unitOfWork // TODO: pool for *unitOfWork (and this.monitor.Track(UnitOfWorkComplete{}) when putting back)
-	for item := range this.input {
+	var unit *unitOfWork
+	for batch := range this.input {
 		if unit == nil {
-			unit = new(unitOfWork)
+			unit = this.newUnit()
+			clear(unit.results)
+			clear(unit.completions)
+			unit.results = unit.results[:0]
+			unit.completions = unit.completions[:0]
 		}
-		unit.completions = append(unit.completions, item.complete)
-		for _, message := range item.messages {
-			this.executor.Execute(message, func(outgoing ...any) {
+		unit.completions = append(unit.completions, batch.complete)
+		for _, instruction := range batch.instructions {
+			this.executor.Execute(instruction, func(outgoing ...any) {
 				for _, result := range outgoing {
-					record := &contracts.Message{Value: result, Content: bytes.NewBuffer(nil)} // TODO: pool for *Message
-					unit.results = append(unit.results, record)
+					message := this.newMessage()
+					message.Value = result
+					message.Content.Reset()
+					unit.results = append(unit.results, message)
 				}
 			})
 		}

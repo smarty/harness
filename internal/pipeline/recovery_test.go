@@ -33,7 +33,7 @@ type RecoveryFixture struct {
 func (this *RecoveryFixture) Setup() {
 	this.ctx = context.WithValue(this.Context(), "testing", this.Name())
 	this.output = make(chan *unitOfWork, 4)
-	this.subject = newRecovery(this.ctx, this, this.output, this.wait, this)
+	this.subject = newRecovery(this.ctx, this, recoveryBatchSize, this.output, this.wait, this)
 }
 
 func (this *RecoveryFixture) wait(_ context.Context, d time.Duration) error {

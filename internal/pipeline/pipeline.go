@@ -1,9 +1,11 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/smarty/harness/v2/contracts"
+	"github.com/smarty/harness/v2/internal/generic"
 )
 
 type Configuration struct {
@@ -26,20 +28,27 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 		work1   = make(chan *unitOfWork, config.PipelineBufferCapacity)
 		work2   = make(chan *unitOfWork, config.PipelineBufferCapacity)
 		work3   = make(chan *unitOfWork, config.PipelineBufferCapacity)
+		work4a  = make(chan *unitOfWork, config.PipelineBufferCapacity)
 		work4b  = make(chan *unitOfWork, config.PipelineBufferCapacity)
-		work4a  = make(chan *unitOfWork, 1)
 		work5   = make(chan *unitOfWork, config.PipelineBufferCapacity)
 	)
 
 	var (
-		recovery    = newRecovery(ctx, config.Recoverer, work4a, wait, config.Monitor)
+		unitPool    = generic.NewPoolT(generic.NewT[unitOfWork])
+		messagePool = generic.NewPoolT(func() *contracts.Message {
+			return &contracts.Message{Content: bytes.NewBuffer(make([]byte, initialContentBufferSize))}
+		})
+	)
+
+	var (
+		recovery    = newRecovery(ctx, config.Recoverer, recoveryBatchSize, work4a, wait, config.Monitor)
 		entrypoint  = newEntrypoint(config.Monitor, batches, config.ShedThreshold)
-		executor    = newExecution(config.Monitor, config.ExecutionUnitSize, batches, work1, newRouter(config.Types...))
+		executor    = newExecution(config.Monitor, config.ExecutionUnitSize, unitPool.Get, messagePool.Get, batches, work1, newRouter(config.Types...))
 		serializers = newFanOut(serializationFactory(config.Monitor, config.Serializer), config.SerializerCount, config.PipelineBufferCapacity, work1, work2)
 		persistence = newPersistence(ctx, config.Monitor, work2, work3, config.Writer, wait)
 		completion  = newCompletion(work3, work4b)
 		broadcast   = newBroadcast(ctx, config.Monitor, work4a, work4b, work5, config.Dispatcher, wait)
-		terminal    = newTerminal(work5)
+		terminal    = newTerminal(work5, unitPool.Put, messagePool.Put)
 	)
 
 	var listeners []contracts.Listener
@@ -69,3 +78,8 @@ func serializationFactory(monitor contracts.Monitor, enc contracts.Serializer) s
 		return newSerialization(monitor, enc, in, out)
 	}
 }
+
+const (
+	recoveryBatchSize        = 64
+	initialContentBufferSize = 1024
+)

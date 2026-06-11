@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"sync"
@@ -94,8 +95,7 @@ func (this *PipelineFixture) ContentType() string { return "" }
 
 func (this *PipelineFixture) Write(ctx context.Context, messages ...*contracts.Message) error {
 	this.So(ctx.Value("testing"), should.Equal, this.Name())
-	buffer := make([]*contracts.Message, len(messages))
-	copy(buffer, messages)
+	buffer := deepCopy(messages) // messages are pooled; copy before the call returns
 	this.writeLock.Lock()
 	this.writeCalls = append(this.writeCalls, buffer)
 	this.writeLock.Unlock()
@@ -104,12 +104,24 @@ func (this *PipelineFixture) Write(ctx context.Context, messages ...*contracts.M
 
 func (this *PipelineFixture) Dispatch(ctx context.Context, messages ...*contracts.Message) error {
 	this.So(ctx.Value("testing"), should.Equal, this.Name())
-	captured := make([]*contracts.Message, len(messages))
-	copy(captured, messages)
+	captured := deepCopy(messages) // messages are pooled; copy before the call returns
 	this.dispatchLock.Lock()
 	this.dispatchCalls = append(this.dispatchCalls, captured)
 	this.dispatchLock.Unlock()
 	return nil
+}
+
+func deepCopy(messages []*contracts.Message) (results []*contracts.Message) {
+	for _, message := range messages {
+		results = append(results, &contracts.Message{
+			ID:          message.ID,
+			Type:        message.Type,
+			Value:       message.Value,
+			Content:     bytes.NewBuffer(append([]byte(nil), message.Content.Bytes()...)),
+			ContentType: message.ContentType,
+		})
+	}
+	return results
 }
 
 func (this *PipelineFixture) Track(observation any) {

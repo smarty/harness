@@ -36,7 +36,7 @@ func (this *entrypoint) prepare(messages ...any) (waiter *sync.WaitGroup, batch 
 	waiter = this.waiters.Get()
 	waiter.Add(1)
 	batch = this.batches.Get()
-	batch.messages = messages
+	batch.instructions = messages
 	batch.complete = func() {
 		waiter.Done()
 		this.monitor.Track(batchComplete)
