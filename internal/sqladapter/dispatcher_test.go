@@ -107,6 +107,12 @@ func (this *DispatcherFixture) TestDispatch_NoMessages_NoOp() {
 	this.So(this.dispatched, should.BeEmpty)
 }
 
+func (this *DispatcherFixture) TestDispatch_ReuseBookkeeping() {
+	this.TestDispatch_PublishesAndMarksDispatched()
+	this.dispatched = nil
+	this.TestDispatch_PublishesAndMarksDispatched()
+}
+
 func (this *DispatcherFixture) dispatchedTimestamp(id uint64) *string {
 	var dispatched sql.NullString
 	err := this.handle.QueryRow(`SELECT dispatched FROM Messages WHERE id = ?`, id).Scan(&dispatched)

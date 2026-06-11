@@ -6,23 +6,27 @@
 package sqladapter
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 
 	"github.com/smarty/harness/v2/contracts"
 )
 
 type Dispatcher struct {
-	inner  contracts.Dispatcher
-	handle *sql.DB
+	inner     contracts.Dispatcher
+	handle    *sql.DB
+	args      []any
+	statement *bytes.Buffer
 }
 
 func NewDispatcher(inner contracts.Dispatcher, handle *sql.DB) *Dispatcher {
 	return &Dispatcher{
-		inner:  inner,
-		handle: handle,
+		inner:     inner,
+		handle:    handle,
+		args:      make([]any, 0, 512),
+		statement: bytes.NewBuffer(make([]byte, 0, 1024*8)),
 	}
 }
 
@@ -34,18 +38,19 @@ func (this *Dispatcher) Dispatch(ctx context.Context, messages ...*contracts.Mes
 		return err
 	}
 
-	var statement strings.Builder // TODO: reuse statement builder
-	statement.WriteString(`UPDATE Messages SET dispatched = NOW(3) WHERE dispatched IS NULL AND id IN (`)
-	args := make([]any, 0, len(messages)) // TODO: reuse args buffer
+	clear(this.args)
+	this.args = this.args[:0]
+	this.statement.Reset()
+	this.statement.WriteString(`UPDATE Messages SET dispatched = NOW(3) WHERE dispatched IS NULL AND id IN (`)
 	for i, message := range messages {
 		if i > 0 {
-			statement.WriteString(`,`)
+			this.statement.WriteString(`,`)
 		}
-		statement.WriteString(`?`)
-		args = append(args, message.ID)
+		this.statement.WriteString(`?`)
+		this.args = append(this.args, message.ID)
 	}
-	statement.WriteString(`)`)
-	if _, err := this.handle.ExecContext(ctx, statement.String(), args...); err != nil {
+	this.statement.WriteString(`)`)
+	if _, err := this.handle.ExecContext(ctx, this.statement.String(), this.args...); err != nil {
 		return fmt.Errorf("mark dispatched: %w", err)
 	}
 	return nil
