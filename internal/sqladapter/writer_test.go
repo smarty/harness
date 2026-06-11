@@ -38,6 +38,7 @@ func TestWriterFixture(t *testing.T) {
 
 type WriterFixture struct {
 	*gunit.Fixture
+	ctx     context.Context
 	handle  *sql.DB
 	subject *Writer
 
@@ -47,6 +48,7 @@ type WriterFixture struct {
 }
 
 func (this *WriterFixture) Setup() {
+	this.ctx = context.WithValue(this.Context(), "testing", this.Name())
 	handle, err := openTestDatabase()
 	this.So(err, should.BeNil)
 	this.handle = handle
@@ -57,7 +59,8 @@ func (this *WriterFixture) Setup() {
 	this.truncateTables()
 }
 
-func (this *WriterFixture) fakeLegacyWrite(_ context.Context, _ *sql.Tx, messages ...any) {
+func (this *WriterFixture) fakeLegacyWrite(ctx context.Context, _ *sql.Tx, messages ...any) {
+	this.So(ctx.Value("testing"), should.Equal, this.Name())
 	this.legacyWriteCalls = append(this.legacyWriteCalls, messages)
 	if this.legacyWritePanic != nil {
 		panic(this.legacyWritePanic)
@@ -77,7 +80,7 @@ func (this *WriterFixture) TestWrite_InsertsMessageRowAndInvokesLegacyWrite() {
 	event := orderReceived{AccountID: 1, OrderID: 2, Timestamp: time.Now().UTC().Round(time.Second)}
 	message := serializedMessage(event, "")
 
-	err := this.subject.Write(context.Background(), message)
+	err := this.subject.Write(this.ctx, message)
 
 	this.So(err, should.BeNil)
 	this.So(this.countMessages(), should.Equal, 1)
@@ -89,7 +92,7 @@ func (this *WriterFixture) TestWrite_ResolvesMessageTypeFromRegistry() {
 	event := orderApproved{AccountID: 1, OrderID: 2, Timestamp: time.Now().UTC()}
 	message := serializedMessage(event, "")
 
-	err := this.subject.Write(context.Background(), message)
+	err := this.subject.Write(this.ctx, message)
 
 	this.So(err, should.BeNil)
 	this.So(this.firstMessageType(), should.Equal, "order-approved")
@@ -99,7 +102,7 @@ func (this *WriterFixture) TestWrite_LegacyWritePanic_RollsBackInsertedMessage()
 	this.legacyWritePanic = "boom"
 	event := orderReceived{AccountID: 1, OrderID: 2, Timestamp: time.Now().UTC()}
 
-	err := this.subject.Write(context.Background(), serializedMessage(event, ""))
+	err := this.subject.Write(this.ctx, serializedMessage(event, ""))
 
 	this.So(err, should.NOT.BeNil)
 	this.So(this.countMessages(), should.Equal, 0)
@@ -109,7 +112,7 @@ func (this *WriterFixture) TestWrite_PreservesPreSetMessageType() {
 	event := orderReceived{AccountID: 1, OrderID: 2, Timestamp: time.Now().UTC()}
 	message := serializedMessage(event, "explicit.override")
 
-	err := this.subject.Write(context.Background(), message)
+	err := this.subject.Write(this.ctx, message)
 
 	this.So(err, should.BeNil)
 	this.So(this.firstMessageType(), should.Equal, "explicit.override")
@@ -121,7 +124,7 @@ func (this *WriterFixture) TestWrite_PopulatesMessageIDFromAutoincrement() {
 	m1 := serializedMessage(event1, "")
 	m2 := serializedMessage(event2, "")
 
-	err := this.subject.Write(context.Background(), m1, m2)
+	err := this.subject.Write(this.ctx, m1, m2)
 
 	this.So(err, should.BeNil)
 	this.So(m1.ID, should.NOT.Equal, uint64(0))
@@ -129,9 +132,19 @@ func (this *WriterFixture) TestWrite_PopulatesMessageIDFromAutoincrement() {
 }
 
 func (this *WriterFixture) TestWrite_NoMessages_NoOp() {
-	err := this.subject.Write(context.Background())
+	err := this.subject.Write(this.ctx)
 	this.So(err, should.BeNil)
 	this.So(this.countMessages(), should.Equal, 0)
+}
+
+func (this *WriterFixture) TestWrite_ReuseBookkeeping() {
+	event := orderReceived{AccountID: 1, OrderID: 2, Timestamp: time.Now().UTC().Round(time.Second)}
+	message := serializedMessage(event, "")
+
+	_ = this.subject.Write(this.ctx, message)
+	_ = this.subject.Write(this.ctx, message) // multiple calls reset internally re-used values (statement, args, etc...)
+
+	this.So(this.countMessages(), should.Equal, 2)
 }
 
 func TestAssignIDsFixture(t *testing.T) {

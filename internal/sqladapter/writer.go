@@ -1,13 +1,13 @@
 package sqladapter
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 
 	"github.com/smarty/harness/v2/contracts"
 )
@@ -16,10 +16,13 @@ import (
 type legacyWrite func(context.Context, *sql.Tx, ...any)
 
 type Writer struct {
-	handle      *sql.DB
-	typeNames   map[reflect.Type]string
-	stride      uint64
-	legacyWrite legacyWrite
+	handle       *sql.DB
+	typeNames    map[reflect.Type]string
+	stride       uint64
+	legacyWrite  legacyWrite
+	legacyValues []any
+	args         []any
+	statement    *bytes.Buffer
 }
 
 // NewWriter builds a Writer that inserts rows into the `Messages` table and
@@ -30,10 +33,13 @@ type Writer struct {
 // should supply a no-op function.
 func NewWriter(handle *sql.DB, typeNames map[reflect.Type]string, stride uint64, legacyWrite legacyWrite) *Writer {
 	return &Writer{
-		handle:      handle,
-		typeNames:   typeNames,
-		stride:      cmp.Or(stride, 1),
-		legacyWrite: legacyWrite,
+		handle:       handle,
+		typeNames:    typeNames,
+		stride:       cmp.Or(stride, 1),
+		legacyWrite:  legacyWrite,
+		legacyValues: make([]any, 0, 256),
+		args:         make([]any, 0, 256),
+		statement:    bytes.NewBuffer(make([]byte, 0, 1024*8)),
 	}
 }
 
@@ -59,30 +65,32 @@ func (this *Writer) Write(ctx context.Context, messages ...*contracts.Message) (
 		return err
 	}
 
-	values := make([]any, 0, len(messages)) // TODO: reuse buffer
+	clear(this.legacyValues)
+	this.legacyValues = this.legacyValues[:0]
 	for _, message := range messages {
-		values = append(values, message.Value)
+		this.legacyValues = append(this.legacyValues, message.Value)
 	}
-	this.legacyWrite(ctx, tx, values...)
+	this.legacyWrite(ctx, tx, this.legacyValues...)
 
 	return tx.Commit()
 }
 
 func (this *Writer) insertMessages(ctx context.Context, tx *sql.Tx, messages []*contracts.Message) error {
-	var statement strings.Builder // TODO: reuse statement builder
-	statement.WriteString(`INSERT INTO Messages (type, payload) VALUES `)
-	args := make([]any, 0, len(messages)*2) // TODO: reuse slice/buffer
+	clear(this.args)
+	this.args = this.args[:0]
+	this.statement.Reset()
+	this.statement.WriteString(`INSERT INTO Messages (type, payload) VALUES `)
 	for i, message := range messages {
 		if message.Type == "" {
 			message.Type = this.typeNames[reflect.TypeOf(message.Value)]
 		}
 		if i > 0 {
-			statement.WriteString(`,`)
+			this.statement.WriteString(`,`)
 		}
-		statement.WriteString(`(?, ?)`)
-		args = append(args, message.Type, message.Content.Bytes())
+		this.statement.WriteString(`(?, ?)`)
+		this.args = append(this.args, message.Type, message.Content.Bytes())
 	}
-	result, err := tx.ExecContext(ctx, statement.String(), args...)
+	result, err := tx.ExecContext(ctx, this.statement.String(), this.args...)
 	if err != nil {
 		return err
 	}
