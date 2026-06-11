@@ -1,0 +1,53 @@
+package pipeline
+
+import (
+	"context"
+	"time"
+
+	"github.com/smarty/harness/v2/internal/contracts"
+)
+
+type Recovery struct {
+	ctx       context.Context
+	recoverer contracts.Recoverer
+	output    chan *unitOfWork
+	wait      contracts.Waiter
+	monitor   contracts.Monitor
+}
+
+func newRecovery(
+	ctx context.Context,
+	recoverer contracts.Recoverer,
+	output chan *unitOfWork,
+	wait contracts.Waiter,
+	monitor contracts.Monitor,
+) *Recovery {
+	return &Recovery{
+		ctx:       ctx,
+		recoverer: recoverer,
+		output:    output,
+		wait:      wait,
+		monitor:   monitor,
+	}
+}
+
+func (this *Recovery) Listen() {
+	defer close(this.output)
+	if messages := this.recover(); len(messages) > 0 {
+		this.output <- &unitOfWork{results: messages}
+	}
+}
+
+func (this *Recovery) recover() []*contracts.Message {
+	for attempt := 1; ; attempt++ {
+		results, err := this.recoverer.Recover(this.ctx)
+		if err == nil {
+			return results
+		}
+		this.monitor.Track(contracts.RecoveryError{Attempts: attempt, Error: err})
+
+		if this.wait(this.ctx, time.Second) != nil {
+			return nil
+		}
+	}
+}

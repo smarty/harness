@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"slices"
 	"testing"
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/internal/generic"
 )
 
 func TestSerializationFixture(t *testing.T) {
@@ -58,10 +60,7 @@ func (this *SerializationFixture) ContentType() string {
 }
 
 func (this *SerializationFixture) drain() (results []*unitOfWork) {
-	for unit := range this.output {
-		results = append(results, unit)
-	}
-	return results
+	return slices.Collect(generic.Drain(this.output))
 }
 
 func (this *SerializationFixture) TestSerializesEachResultValueIntoContent() {

@@ -65,6 +65,12 @@ func (singleton) Monitor(value contracts.Monitor) option {
 	return func(this *pipeline.Configuration) { this.Monitor = value }
 }
 
+// Recoverer sets the collaborator that loads previously persisted but
+// undispatched messages at startup so the broadcast stage can dispatch them.
+func (singleton) Recoverer(value contracts.Recoverer) option {
+	return func(this *pipeline.Configuration) { this.Recoverer = value }
+}
+
 // Serializer sets the collaborator used to encode outgoing messages into bytes.
 func (singleton) Serializer(value contracts.Serializer) option {
 	return func(this *pipeline.Configuration) { this.Serializer = value }
@@ -120,6 +126,7 @@ func (singleton) defaults(options ...option) []option {
 	blank := nop{}
 	return append([]option{
 		Options.Monitor(blank),
+		Options.Recoverer(blank),
 		Options.Serializer(blank),
 		Options.Writer(blank),
 		Options.Dispatcher(blank),
@@ -136,6 +143,7 @@ func (singleton) defaults(options ...option) []option {
 type nop struct{}
 
 func (nop) Track(any)                                             {}
+func (nop) Recover(context.Context) ([]*contracts.Message, error) { return nil, nil }
 func (nop) Serialize(io.Writer, any) error                        { return nil }
 func (nop) ContentType() string                                   { return "" }
 func (nop) Write(context.Context, ...*contracts.Message) error    { return nil }

@@ -11,17 +11,25 @@ import (
 type broadcast struct {
 	ctx        context.Context
 	monitor    contracts.Monitor
+	startup    chan *unitOfWork
 	input      chan *unitOfWork
 	output     chan *unitOfWork
 	buffer     []*contracts.Message
 	dispatcher contracts.Dispatcher
-	wait       func(context.Context, time.Duration) error
+	wait       contracts.Waiter
 }
 
-func newBroadcast(ctx context.Context, monitor contracts.Monitor, input, output chan *unitOfWork, dispatcher contracts.Dispatcher, wait func(context.Context, time.Duration) error) *broadcast {
+func newBroadcast(
+	ctx context.Context,
+	monitor contracts.Monitor,
+	startup, input, output chan *unitOfWork,
+	dispatcher contracts.Dispatcher,
+	wait contracts.Waiter,
+) *broadcast {
 	return &broadcast{
 		ctx:        ctx,
 		monitor:    monitor,
+		startup:    startup,
 		input:      input,
 		output:     output,
 		buffer:     make([]*contracts.Message, 0, 1024),
@@ -32,7 +40,12 @@ func newBroadcast(ctx context.Context, monitor contracts.Monitor, input, output 
 
 func (this *broadcast) Listen() {
 	defer close(this.output)
-	for unit := range this.input {
+	this.processFrom(this.startup)
+	this.processFrom(this.input)
+}
+
+func (this *broadcast) processFrom(input chan *unitOfWork) {
+	for unit := range input {
 		for _, message := range unit.results {
 			this.buffer = append(this.buffer, message)
 		}

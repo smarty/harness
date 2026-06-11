@@ -4,54 +4,29 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"time"
 
 	"github.com/smarty/harness/v2/internal/contracts"
 )
 
+// Recovery scans Messages WHERE dispatched IS NULL at startup and returns each
+// row as a *contracts.Message, destined for the Dispatcher (publish + mark
+// dispatched). Invoked by the pipeline's recovery station as the harness starts.
 type Recovery struct {
-	ctx     context.Context
-	handle  *sql.DB
-	output  chan *contracts.Message
-	wait    func(context.Context, time.Duration) error
-	monitor contracts.Monitor
+	handle *sql.DB
 }
 
-func NewRecovery(ctx context.Context, handle *sql.DB, output chan *contracts.Message, wait func(context.Context, time.Duration) error, monitor contracts.Monitor) *Recovery {
-	return &Recovery{
-		ctx:     ctx,
-		handle:  handle,
-		output:  output,
-		wait:    wait,
-		monitor: monitor,
-	}
+func NewRecovery(handle *sql.DB) *Recovery {
+	return &Recovery{handle: handle}
 }
 
-func (this *Recovery) Listen() {
-	for attempt := 1; ; attempt++ {
-		err := this.recover()
-		if err == nil {
-			return
-		}
-		if this.wait(this.ctx, time.Second) != nil {
-			return
-		}
-		this.monitor.Track(contracts.RecoveryError{Attempts: attempt, Error: err})
-	}
-}
-
-// recover scans Messages WHERE dispatched IS NULL at startup, wraps each row
-// as a *contracts.Message, and feeds them to a channel that will eventually
-// lead to the Dispatcher (publish + mark dispatched). Intended to run
-// synchronously during initialization, as the harness pipeline starts.
-func (this *Recovery) recover() error {
-	rows, err := this.handle.QueryContext(this.ctx, `
+func (this *Recovery) Recover(ctx context.Context) (results []*contracts.Message, err error) {
+	rows, err := this.handle.QueryContext(ctx, `
 		SELECT id, type, payload
 		  FROM Messages
 		 WHERE dispatched IS NULL
 		 ORDER BY id;`)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -62,18 +37,22 @@ func (this *Recovery) recover() error {
 			payload  []byte
 		)
 		if err := rows.Scan(&id, &typeName, &payload); err != nil {
-			return err
+			return nil, err
 		}
 		// NOTE: we're not going to worry about pooling/reusing these values since this
 		// is a one-time procedure executed at startup.
-		this.output <- &contracts.Message{
+		results = append(results, &contracts.Message{
 			ID:      id,
 			Type:    typeName,
 			Content: bytes.NewBuffer(payload),
 			// Hard-coded until the Messages schema gains a content_type column;
 			// all payloads written by Writer are JSON so this is correct for now.
 			ContentType: "application/json",
-		}
+		})
 	}
-	return rows.Err()
+	err = rows.Err()
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
 }

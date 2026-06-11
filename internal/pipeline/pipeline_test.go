@@ -41,6 +41,7 @@ func (this *PipelineFixture) Setup() {
 	this.ctx = context.WithValue(this.Context(), "testing", this.Name())
 	this.pipeline = Build(this.ctx, Configuration{
 		Monitor:                this,
+		Recoverer:              this,
 		Serializer:             this,
 		Writer:                 this,
 		Dispatcher:             this,
@@ -76,6 +77,11 @@ func (this *PipelineFixture) Execute(message any, broadcast func(...any)) {
 	this.executeCalls = append(this.executeCalls, message)
 	this.executeLock.Unlock()
 	this.ExecuteCommand(commandType(""), broadcast)
+}
+
+func (this *PipelineFixture) Recover(ctx context.Context) ([]*contracts.Message, error) {
+	this.So(ctx.Value("testing"), should.Equal, this.Name())
+	return nil, nil
 }
 
 func (this *PipelineFixture) Serialize(out io.Writer, _ any) error {

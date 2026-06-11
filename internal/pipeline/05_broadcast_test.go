@@ -19,6 +19,7 @@ func TestBroadcastFixture(t *testing.T) {
 type BroadcastFixture struct {
 	*gunit.Fixture
 	ctx     context.Context
+	startup chan *unitOfWork
 	input   chan *unitOfWork
 	output  chan *unitOfWork
 	waits   []time.Duration
@@ -34,9 +35,11 @@ type BroadcastFixture struct {
 
 func (this *BroadcastFixture) Setup() {
 	this.ctx = context.WithValue(this.Context(), "testing", this.Name())
+	this.startup = make(chan *unitOfWork, 1)
+	close(this.startup) // most tests exercise steady-state input; startup tests rebuild the subject
 	this.input = make(chan *unitOfWork, 4)
 	this.output = make(chan *unitOfWork, 4)
-	this.subject = newBroadcast(this.ctx, this, this.input, this.output, this, this.wait)
+	this.subject = newBroadcast(this.ctx, this, this.startup, this.input, this.output, this, this.wait)
 }
 
 func (this *BroadcastFixture) wait(_ context.Context, d time.Duration) error {
@@ -155,6 +158,26 @@ func (this *BroadcastFixture) TestBroadcastAbandonsOnContextCancelButStillForwar
 	this.So(failure.Error, should.WrapError, contracts.ErrBroadcast)
 	this.So(failure.Attempt, should.Equal, 1)
 	this.So(this.tracked[1], should.Equal, contracts.BroadcastAbandoned{Attempts: 1})
+}
+
+func (this *BroadcastFixture) TestStartupUnitsDispatchedBeforeInputUnits() {
+	this.startup = make(chan *unitOfWork, 1)
+	this.subject = newBroadcast(this.ctx, this, this.startup, this.input, this.output, this, this.wait)
+	recovered := &contracts.Message{Value: "recovered"}
+	live := &contracts.Message{Value: "live"}
+	this.input <- &unitOfWork{results: []*contracts.Message{live}}
+	close(this.input)
+	this.startup <- &unitOfWork{results: []*contracts.Message{recovered}}
+	close(this.startup)
+
+	go this.subject.Listen()
+
+	units := this.drain()
+	this.So(len(units), should.Equal, 2)
+	this.So(len(this.dispatchCalls), should.Equal, 2)
+	this.So(this.dispatchCalls[0], should.Equal, []*contracts.Message{recovered})
+	this.So(this.dispatchCalls[1], should.Equal, []*contracts.Message{live})
+	this.So(this.tracked, should.BeEmpty)
 }
 
 func (this *BroadcastFixture) TestClosedInputClosesOutput() {

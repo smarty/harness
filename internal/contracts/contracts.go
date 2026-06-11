@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"time"
 )
 
 // Interfaces common to many of our external and internal modules
@@ -18,6 +19,9 @@ type (
 
 // Collaborator interfaces — callers supply real implementations via Options.*
 type (
+	Recoverer interface {
+		Recover(context.Context) ([]*Message, error)
+	}
 	Serializer interface {
 		Serialize(out io.Writer, in any) error
 		ContentType() string
@@ -31,6 +35,7 @@ type (
 	Monitor interface {
 		Track(observation any)
 	}
+	Waiter func(context.Context, time.Duration) error
 )
 
 // Message represents a record to be saved or loaded to/from the Messages database table.
