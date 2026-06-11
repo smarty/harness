@@ -46,15 +46,15 @@ func (this *persistence) Listen() {
 	}
 }
 func (this *persistence) store() (stored bool) {
-	var failure monitoring.PersistenceError
 	for attempt := 1; ; attempt++ {
 		err := this.writer.Write(this.ctx, this.buffer...)
 		if err == nil {
 			return true
 		}
-		failure.Attempt = attempt
-		failure.Error = fmt.Errorf("%w: %w", monitoring.ErrPersistence, err)
-		this.monitor.Track(failure)
+		this.monitor.Track(monitoring.PersistenceError{
+			Attempt: attempt,
+			Error:   fmt.Errorf("%w: %w", monitoring.ErrPersistence, err),
+		})
 		// Retries forever (until the process restarts) unless the context is cancelled.
 		if this.wait(this.ctx, backoff(attempt)) != nil {
 			this.monitor.Track(monitoring.PersistenceAbandoned{Attempts: attempt})
