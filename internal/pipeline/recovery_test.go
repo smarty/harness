@@ -33,7 +33,7 @@ type RecoveryFixture struct {
 func (this *RecoveryFixture) Setup() {
 	this.ctx = context.WithValue(this.Context(), "testing", this.Name())
 	this.output = make(chan *unitOfWork, 4)
-	this.subject = newRecovery(this.ctx, this, recoveryBatchSize, this.output, this.wait, this)
+	this.subject = newRecovery(this.ctx, this, 1, this.output, this.wait, this)
 }
 
 func (this *RecoveryFixture) wait(_ context.Context, d time.Duration) error {
@@ -56,17 +56,18 @@ func (this *RecoveryFixture) Recover(ctx context.Context) ([]*contracts.Message,
 	return this.recovered, nil
 }
 
-func (this *RecoveryFixture) drain() (results []*unitOfWork) {
+func (this *RecoveryFixture) drain() (results []*contracts.Message) {
 	for unit := range this.output {
-		results = append(results, unit)
+		results = append(results, unit.results...)
 	}
 	return results
 }
 
 func (this *RecoveryFixture) TestNothingToRecover_EmitsNoUnitAndClosesOutput() {
-	this.subject.Listen()
+	go this.subject.Listen()
+	results := this.drain()
 
-	this.So(this.drain(), should.BeEmpty)
+	this.So(results, should.BeEmpty)
 	this.So(this.waits, should.BeEmpty)
 	this.So(this.tracked, should.BeEmpty)
 }
@@ -74,11 +75,10 @@ func (this *RecoveryFixture) TestNothingToRecover_EmitsNoUnitAndClosesOutput() {
 func (this *RecoveryFixture) TestRecoveredMessages_EmittedAsSingleUnitThenOutputClosed() {
 	this.recovered = []*contracts.Message{{ID: 1}, {ID: 2}}
 
-	this.subject.Listen()
+	go this.subject.Listen()
+	results := this.drain()
 
-	units := this.drain()
-	this.So(len(units), should.Equal, 1)
-	this.So(units[0].results, should.Equal, this.recovered)
+	this.So(results, should.Equal, this.recovered)
 	this.So(this.waits, should.BeEmpty)
 	this.So(this.tracked, should.BeEmpty)
 }
@@ -88,10 +88,10 @@ func (this *RecoveryFixture) TestRecoverError_TracksThenWaitsThenRetries() {
 	this.recoverErrs = []error{boom, boom}
 	this.recovered = []*contracts.Message{{ID: 1}}
 
-	this.subject.Listen()
+	go this.subject.Listen()
+	results := this.drain()
 
-	units := this.drain()
-	this.So(len(units), should.Equal, 1)
+	this.So(results, should.Equal, this.recovered)
 	this.So(this.recoverCalls, should.Equal, 3)
 	this.So(this.waits, should.Equal, []time.Duration{time.Second, time.Second})
 	this.So(this.tracked, should.Equal, []any{
@@ -106,9 +106,10 @@ func (this *RecoveryFixture) TestRecoverError_WaitFails_AbandonsAndClosesOutput(
 	this.recovered = []*contracts.Message{{ID: 1}} // would succeed on retry, but wait fails first
 	this.waitErr = context.Canceled
 
-	this.subject.Listen()
+	go this.subject.Listen()
+	results := this.drain()
 
-	this.So(this.drain(), should.BeEmpty)
+	this.So(results, should.BeEmpty)
 	this.So(this.recoverCalls, should.Equal, 1)
 	this.So(this.waits, should.Equal, []time.Duration{time.Second})
 	this.So(this.tracked, should.Equal, []any{monitoring.RecoveryError{Attempts: 1, Error: boom}})
