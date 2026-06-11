@@ -1,7 +1,7 @@
 package pipeline
 
 import (
-	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/contracts"
 )
 
 // Internal interfaces — discovered reflectively from domain types

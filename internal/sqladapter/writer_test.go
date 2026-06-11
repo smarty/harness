@@ -11,7 +11,7 @@ import (
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
-	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/contracts"
 )
 
 // Local test-only message types mirror the shape the source used.

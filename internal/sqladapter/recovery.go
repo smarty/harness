@@ -5,7 +5,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/contracts"
 )
 
 // Recovery scans Messages WHERE dispatched IS NULL at startup and returns each

@@ -3,7 +3,7 @@ package pipeline
 import (
 	"bytes"
 
-	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/contracts"
 )
 
 type execution struct {

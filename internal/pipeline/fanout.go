@@ -3,7 +3,7 @@ package pipeline
 import (
 	"sync"
 
-	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/contracts"
 )
 
 type stationFactory func(in, out chan *unitOfWork) contracts.Listener

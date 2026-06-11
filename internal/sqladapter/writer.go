@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/contracts"
 )
 
 // Deprecated
