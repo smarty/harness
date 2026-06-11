@@ -33,6 +33,7 @@ type (
 	}
 )
 
+// Message represents a record to be saved or loaded to/from the Messages database table.
 type Message struct {
 	// ID represents the unique ID of this message and its sequential place within a larger stream.
 	ID uint64
