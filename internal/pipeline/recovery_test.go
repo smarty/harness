@@ -9,6 +9,7 @@ import (
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/monitoring"
 )
 
 func TestRecoveryFixture(t *testing.T) {
@@ -94,8 +95,8 @@ func (this *RecoveryFixture) TestRecoverError_TracksThenWaitsThenRetries() {
 	this.So(this.recoverCalls, should.Equal, 3)
 	this.So(this.waits, should.Equal, []time.Duration{time.Second, time.Second})
 	this.So(this.tracked, should.Equal, []any{
-		contracts.RecoveryError{Attempts: 1, Error: boom},
-		contracts.RecoveryError{Attempts: 2, Error: boom},
+		monitoring.RecoveryError{Attempts: 1, Error: boom},
+		monitoring.RecoveryError{Attempts: 2, Error: boom},
 	})
 }
 
@@ -110,5 +111,5 @@ func (this *RecoveryFixture) TestRecoverError_WaitFails_AbandonsAndClosesOutput(
 	this.So(this.drain(), should.BeEmpty)
 	this.So(this.recoverCalls, should.Equal, 1)
 	this.So(this.waits, should.Equal, []time.Duration{time.Second})
-	this.So(this.tracked, should.Equal, []any{contracts.RecoveryError{Attempts: 1, Error: boom}})
+	this.So(this.tracked, should.Equal, []any{monitoring.RecoveryError{Attempts: 1, Error: boom}})
 }

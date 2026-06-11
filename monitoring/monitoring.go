@@ -1,8 +1,8 @@
-package contracts
+// Package monitoring contains observations emitted by the pipeline.
+package monitoring
 
 import "errors"
 
-// Monitor observations emitted by the pipeline.
 type (
 	BatchInFlight      struct{}
 	BatchComplete      struct{}

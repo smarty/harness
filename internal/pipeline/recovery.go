@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/monitoring"
 )
 
 type Recovery struct {
@@ -44,7 +45,7 @@ func (this *Recovery) recover() []*contracts.Message {
 		if err == nil {
 			return results
 		}
-		this.monitor.Track(contracts.RecoveryError{Attempts: attempt, Error: err})
+		this.monitor.Track(monitoring.RecoveryError{Attempts: attempt, Error: err})
 
 		if this.wait(this.ctx, time.Second) != nil {
 			return nil

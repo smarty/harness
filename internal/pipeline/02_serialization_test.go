@@ -11,6 +11,7 @@ import (
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/internal/contracts"
 	"github.com/smarty/harness/v2/internal/generic"
+	"github.com/smarty/harness/v2/monitoring"
 )
 
 func TestSerializationFixture(t *testing.T) {
@@ -157,12 +158,12 @@ func (this *SerializationFixture) TestSerializerErrorTracksThenPanics() {
 	this.So(recovered, should.NOT.BeNil)
 	err, isError := recovered.(error)
 	this.So(isError, should.BeTrue)
-	this.So(err, should.WrapError, contracts.ErrSerialization)
+	this.So(err, should.WrapError, monitoring.ErrSerialization)
 	this.So(err, should.WrapError, boom)
 	this.So(this.tracked, should.HaveLength, 1)
-	observation, isObservation := this.tracked[0].(contracts.SerializationError)
+	observation, isObservation := this.tracked[0].(monitoring.SerializationError)
 	this.So(isObservation, should.BeTrue)
-	this.So(observation.Error, should.WrapError, contracts.ErrSerialization)
+	this.So(observation.Error, should.WrapError, monitoring.ErrSerialization)
 	this.So(observation.Value, should.Equal, bad)
 	this.So(this.serializeCalls, should.Equal, []any{"good-1", bad})
 	this.So(this.drain(), should.BeEmpty) // drain returning proves output was closed during unwind

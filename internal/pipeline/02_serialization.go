@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/monitoring"
 )
 
 type serialization struct {
@@ -28,9 +29,9 @@ func (this *serialization) Listen() {
 		for _, message := range unit.results {
 			err := this.serializer.Serialize(message.Content, message.Value)
 			if err != nil {
-				failure := contracts.SerializationError{
+				failure := monitoring.SerializationError{
 					Value: message.Value,
-					Error: fmt.Errorf("%w: %w", contracts.ErrSerialization, err),
+					Error: fmt.Errorf("%w: %w", monitoring.ErrSerialization, err),
 				}
 				this.monitor.Track(failure)
 				panic(failure.Error) // The caller has failed to produce only values that will serialize successfully.

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/monitoring"
 )
 
 type persistence struct {
@@ -45,19 +46,19 @@ func (this *persistence) Listen() {
 	}
 }
 func (this *persistence) store() (stored bool) {
-	var failure contracts.PersistenceError
+	var failure monitoring.PersistenceError
 	for attempt := 1; ; attempt++ {
 		err := this.writer.Write(this.ctx, this.buffer...)
 		if err == nil {
 			return true
 		}
 		failure.Attempt = attempt
-		failure.Error = fmt.Errorf("%w: %w", contracts.ErrPersistence, err)
+		failure.Error = fmt.Errorf("%w: %w", monitoring.ErrPersistence, err)
 		this.monitor.Track(failure)
 		// Retries forever (until the process restarts) unless the context is cancelled.
 		// TODO: exponential back-off w/ jitter
 		if this.wait(this.ctx, time.Second) != nil {
-			this.monitor.Track(contracts.PersistenceAbandoned{Attempts: attempt})
+			this.monitor.Track(monitoring.PersistenceAbandoned{Attempts: attempt})
 			return false
 		}
 	}

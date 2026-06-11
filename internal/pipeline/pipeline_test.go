@@ -10,6 +10,7 @@ import (
 	"github.com/smarty/gunit/v2/assert/better"
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/monitoring"
 )
 
 func TestPipelineFixture(t *testing.T) {
@@ -122,9 +123,9 @@ func (this *PipelineFixture) countTracked() (batchInFlight, batchComplete int) {
 	defer this.trackLock.Unlock()
 	for _, observation := range this.tracked {
 		switch observation.(type) {
-		case contracts.BatchInFlight:
+		case monitoring.BatchInFlight:
 			batchInFlight++
-		case contracts.BatchComplete:
+		case monitoring.BatchComplete:
 			batchComplete++
 		}
 	}

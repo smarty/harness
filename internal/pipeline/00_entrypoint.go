@@ -6,6 +6,7 @@ import (
 
 	"github.com/smarty/harness/v2/internal/contracts"
 	"github.com/smarty/harness/v2/internal/generic"
+	"github.com/smarty/harness/v2/monitoring"
 )
 
 type entrypoint struct {
@@ -136,8 +137,8 @@ func (this *entrypoint) Close() error {
 }
 
 var (
-	batchInFlight  contracts.BatchInFlight
-	batchComplete  contracts.BatchComplete
-	loadShed       contracts.LoadShed
-	callerDeparted contracts.CallerDeparted
+	batchInFlight  monitoring.BatchInFlight
+	batchComplete  monitoring.BatchComplete
+	loadShed       monitoring.LoadShed
+	callerDeparted monitoring.CallerDeparted
 )

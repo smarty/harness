@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/monitoring"
 )
 
 type broadcast struct {
@@ -63,14 +64,14 @@ func (this *broadcast) dispatch() {
 		if err == nil {
 			return
 		}
-		this.monitor.Track(contracts.BroadcastError{
+		this.monitor.Track(monitoring.BroadcastError{
 			Attempt: attempt,
-			Error:   fmt.Errorf("%w: %w", contracts.ErrBroadcast, err),
+			Error:   fmt.Errorf("%w: %w", monitoring.ErrBroadcast, err),
 		})
 		// Retries forever (until the process restarts) unless the context is cancelled.
 		// TODO: exponential backoff w/ jitter
 		if this.wait(this.ctx, time.Second) != nil {
-			this.monitor.Track(contracts.BroadcastAbandoned{Attempts: attempt})
+			this.monitor.Track(monitoring.BroadcastAbandoned{Attempts: attempt})
 			return
 		}
 	}

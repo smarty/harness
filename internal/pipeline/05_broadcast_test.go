@@ -10,6 +10,7 @@ import (
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/internal/contracts"
+	"github.com/smarty/harness/v2/monitoring"
 )
 
 func TestBroadcastFixture(t *testing.T) {
@@ -132,9 +133,9 @@ func (this *BroadcastFixture) TestRetriesUntilDispatchSucceeds() {
 	this.So(this.waits, should.Equal, []time.Duration{time.Second, time.Second})
 	this.So(this.tracked, should.HaveLength, 2)
 	for n, observation := range this.tracked {
-		failure, ok := observation.(contracts.BroadcastError)
+		failure, ok := observation.(monitoring.BroadcastError)
 		this.So(ok, should.BeTrue)
-		this.So(failure.Error, should.WrapError, contracts.ErrBroadcast)
+		this.So(failure.Error, should.WrapError, monitoring.ErrBroadcast)
 		this.So(failure.Attempt, should.Equal, n+1)
 	}
 }
@@ -153,11 +154,11 @@ func (this *BroadcastFixture) TestBroadcastAbandonsOnContextCancelButStillForwar
 	this.So(len(this.dispatchCalls), should.Equal, 1)
 	this.So(this.waits, should.Equal, []time.Duration{time.Second})
 	this.So(this.tracked, should.HaveLength, 2)
-	failure, ok := this.tracked[0].(contracts.BroadcastError)
+	failure, ok := this.tracked[0].(monitoring.BroadcastError)
 	this.So(ok, should.BeTrue)
-	this.So(failure.Error, should.WrapError, contracts.ErrBroadcast)
+	this.So(failure.Error, should.WrapError, monitoring.ErrBroadcast)
 	this.So(failure.Attempt, should.Equal, 1)
-	this.So(this.tracked[1], should.Equal, contracts.BroadcastAbandoned{Attempts: 1})
+	this.So(this.tracked[1], should.Equal, monitoring.BroadcastAbandoned{Attempts: 1})
 }
 
 func (this *BroadcastFixture) TestStartupUnitsDispatchedBeforeInputUnits() {
