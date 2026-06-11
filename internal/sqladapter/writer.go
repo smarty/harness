@@ -19,7 +19,6 @@ type Writer struct {
 	handle      *sql.DB
 	typeNames   map[reflect.Type]string
 	stride      uint64
-	logger      Logger
 	legacyWrite legacyWrite
 }
 
@@ -29,12 +28,11 @@ type Writer struct {
 // Deprecation warning: the legacyWrite escape hatch is retained for migration from
 // other projects and will be removed in a later release; new callers
 // should supply a no-op function.
-func NewWriter(handle *sql.DB, typeNames map[reflect.Type]string, stride uint64, logger Logger, legacyWrite legacyWrite) *Writer {
+func NewWriter(handle *sql.DB, typeNames map[reflect.Type]string, stride uint64, legacyWrite legacyWrite) *Writer {
 	return &Writer{
 		handle:      handle,
 		typeNames:   typeNames,
 		stride:      cmp.Or(stride, 1),
-		logger:      logger,
 		legacyWrite: legacyWrite,
 	}
 }

@@ -53,7 +53,7 @@ func (this *WriterFixture) Setup() {
 	this.legacyWriteCalls = nil
 	this.legacyWritePanic = nil
 	this.testStride = 7
-	this.subject = NewWriter(handle, testTypeNames(), this.testStride, this, this.fakeLegacyWrite)
+	this.subject = NewWriter(handle, testTypeNames(), this.testStride, this.fakeLegacyWrite)
 	this.truncateTables()
 }
 
@@ -146,7 +146,7 @@ type AssignIDsFixture struct {
 }
 
 func (this *AssignIDsFixture) writer(stride uint64) *Writer {
-	return NewWriter(nil, nil, stride, nil, nil)
+	return NewWriter(nil, nil, stride, nil)
 }
 func (this *AssignIDsFixture) messages(count int) (results []*contracts.Message) {
 	for range count {
