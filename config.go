@@ -123,7 +123,7 @@ func (singleton) ShedThreshold(value float64) option {
 }
 
 func (singleton) defaults(options ...option) []option {
-	blank := nop{}
+	var blank nop
 	return append([]option{
 		Options.Monitor(blank),
 		Options.Recoverer(blank),

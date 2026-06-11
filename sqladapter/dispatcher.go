@@ -21,6 +21,9 @@ type Dispatcher struct {
 	statement *bytes.Buffer
 }
 
+// NewDispatcher builds a dispatcher. The inner dispatcher is the caller's
+// opportunity to provide an adapter layer to convert between our *contracts.Message
+// to their own preferred dispatch type (perhaps a library for RabbitMQ, or Kafka, etc.).
 func NewDispatcher(inner contracts.Dispatcher, handle *sql.DB) *Dispatcher {
 	return &Dispatcher{
 		inner:     inner,

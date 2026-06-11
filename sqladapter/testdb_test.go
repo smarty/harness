@@ -69,5 +69,5 @@ func setupSchema(db *sql.DB) error {
 // since tests run from the package directory regardless of CWD.
 func findSchemaFile() string {
 	_, thisFile, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(thisFile), "..", "..", "doc", "mysql", "schema.sql")
+	return filepath.Join(filepath.Dir(thisFile), "..", "doc", "mysql", "schema.sql")
 }
