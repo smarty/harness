@@ -52,7 +52,7 @@ func (this *Recovery) recover() []*contracts.Message {
 		if err == nil {
 			return results
 		}
-		this.monitor.Track(monitoring.RecoveryError{Attempts: attempt, Error: err})
+		this.monitor.Track(monitoring.RecoveryError{Attempt: attempt, Error: err})
 
 		if this.wait(this.ctx, backoff(attempt)) != nil {
 			return nil

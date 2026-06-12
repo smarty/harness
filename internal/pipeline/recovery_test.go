@@ -95,8 +95,8 @@ func (this *RecoveryFixture) TestRecoverError_TracksThenWaitsThenRetries() {
 	this.So(this.recoverCalls, should.Equal, 3)
 	assertBackoffWaits(this.Fixture, this.waits, 2)
 	this.So(this.tracked, should.Equal, []any{
-		monitoring.RecoveryError{Attempts: 1, Error: boom},
-		monitoring.RecoveryError{Attempts: 2, Error: boom},
+		monitoring.RecoveryError{Attempt: 1, Error: boom},
+		monitoring.RecoveryError{Attempt: 2, Error: boom},
 	})
 }
 
@@ -112,5 +112,5 @@ func (this *RecoveryFixture) TestRecoverError_WaitFails_AbandonsAndClosesOutput(
 	this.So(results, should.BeEmpty)
 	this.So(this.recoverCalls, should.Equal, 1)
 	assertBackoffWaits(this.Fixture, this.waits, 1)
-	this.So(this.tracked, should.Equal, []any{monitoring.RecoveryError{Attempts: 1, Error: boom}})
+	this.So(this.tracked, should.Equal, []any{monitoring.RecoveryError{Attempt: 1, Error: boom}})
 }

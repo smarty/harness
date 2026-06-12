@@ -23,8 +23,8 @@ type (
 	}
 	BroadcastAbandoned struct{ Attempts int }
 	RecoveryError      struct {
-		Attempts int
-		Error    error
+		Attempt int
+		Error   error
 	}
 )
 
