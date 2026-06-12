@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Adversarial Pre-Release Review — smarty/harness v2</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f8fa; --panel2: #eef1f4; --text: #1f2328;
+    --muted: #59636e; --accent: #0969da; --border: #d1d9e0;
+    --crit: #c62828; --high: #e65100; --med: #b8860b; --low: #2e7d32; --info: #607d8b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.6 -apple-system, "Segoe UI", Helvetica, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 32px 40px 16px; border-bottom: 1px solid var(--border); }
+  h1 { margin: 0 0 4px; font-size: 26px; }
+  h1 small { color: var(--muted); font-weight: normal; font-size: 15px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 40px 80px; }
+  h2 { margin-top: 40px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
+  code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
+  pre { background: #f6f8fa; border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; line-height: 1.45; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; }
+  th { background: var(--panel2); }
+  .filters { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 12px 0; display: flex; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+  .filters button { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 16px; padding: 4px 14px; cursor: pointer; font-size: 13px; }
+  .filters button.active { border-color: var(--accent); color: var(--accent); }
+  details.finding { background: var(--panel); border: 1px solid var(--border); border-left-width: 5px; border-radius: 8px; margin: 14px 0; }
+  details.finding > summary { cursor: pointer; padding: 12px 16px; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 10px; }
+  details.finding > summary::-webkit-details-marker { display: none; }
+  details.finding > summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
+  details.finding[open] > summary::before { transform: rotate(90deg); }
+  details.finding > div { padding: 0 18px 16px; border-top: 1px solid var(--border); }
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 10px; color: #ffffff; letter-spacing: .5px; flex-shrink: 0; }
+  .CRITICAL { border-left-color: var(--crit); } .CRITICAL .badge { background: var(--crit); }
+  .HIGH     { border-left-color: var(--high); } .HIGH .badge { background: var(--high); }
+  .MEDIUM   { border-left-color: var(--med);  } .MEDIUM .badge { background: var(--med); }
+  .LOW      { border-left-color: var(--low);  } .LOW .badge { background: var(--low); }
+  .INFO     { border-left-color: var(--info); } .INFO .badge { background: var(--info); }
+  .loc { color: var(--muted); font-size: 12px; font-weight: normal; margin-left: auto; }
+  .verified { font-size: 11px; color: var(--low); border: 1px solid var(--low); border-radius: 10px; padding: 1px 8px; flex-shrink: 0; }
+  .inspect { font-size: 11px; color: var(--info); border: 1px solid var(--info); border-radius: 10px; padding: 1px 8px; flex-shrink: 0; }
+  .kbd { background: var(--panel2); border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; }
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 18px 0; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; }
+  .stat .n { font-size: 30px; font-weight: 700; }
+  .stat .l { color: var(--muted); font-size: 12px; }
+  .pipe { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 16px 0; font-size: 12px; }
+  .stage { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+  .pipe .arrow { color: var(--muted); }
+  .danger-note { color: var(--crit); font-weight: 600; }
+  footer { color: var(--muted); font-size: 12px; text-align: center; padding: 24px; border-top: 1px solid var(--border); }
+  a { color: var(--accent); }
+  /* completion status */
+  .status { font-size: 11px; font-weight: 700; border-radius: 10px; padding: 2px 10px; border: 1px solid; background: transparent; flex-shrink: 0; letter-spacing: .3px; }
+  .status[data-state="open"]       { color: var(--crit); border-color: var(--crit); }
+  .status[data-state="inprogress"] { color: var(--high); border-color: var(--high); }
+  .status[data-state="fixed"]      { color: var(--low);  border-color: var(--low); }
+  .status[data-state="wontfix"]    { color: var(--muted); border-color: var(--muted); }
+  details.finding[data-state="fixed"]   > summary { opacity: .55; }
+  details.finding[data-state="wontfix"] > summary { opacity: .55; }
+  #progressPanel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin: 18px 0; }
+  #progressPanel h3 { margin: 0 0 8px; font-size: 14px; }
+  #progressBar { display: flex; height: 18px; border-radius: 9px; overflow: hidden; background: var(--panel2); border: 1px solid var(--border); }
+  #progressBar div { transition: width .25s; }
+  #progressBar .seg-fixed      { background: var(--low); }
+  #progressBar .seg-inprogress { background: var(--high); }
+  #progressBar .seg-wontfix    { background: var(--info); }
+  #progressLegend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  #progressLegend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+  #progressHint { font-size: 11px; color: var(--muted); margin-top: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Adversarial Pre-Release Review <small>— github.com/smarty/harness/v2</small></h1>
+  <div class="meta">2026-06-12 · reviewed at working tree commit <code>2605ea5</code> (clean) · Go 1.26.4 · full suite + MySQL integration tests executed (<code>make test</code>, <code>make test.db</code> equivalents), all green · unit coverage 100% in root/pipeline/generic, 87.7% in sqladapter (with DB)</div>
+</header>
+<main>
+
+<h2>Verdict</h2>
+<p><strong>Do not tag yet.</strong> One <span class="danger-note">critical, reproduced data-corruption bug</span> (stale pooled <code>Message.Type</code> persisted to the database — 38% of rows mislabeled in a 100-message repro) should be fixed first. Beyond that, the module is in genuinely good shape: tight, well-commented code, exhaustive unit tests, races clean, and a thoughtful shutdown story. The remaining findings are configuration-validation holes, ordering semantics worth documenting, and a few shutdown/stall edge cases.</p>
+
+<div class="summary-grid">
+  <div class="stat"><div class="n" style="color:var(--crit)">1</div><div class="l">Critical</div></div>
+  <div class="stat"><div class="n" style="color:var(--high)">2</div><div class="l">High</div></div>
+  <div class="stat"><div class="n" style="color:var(--med)">4</div><div class="l">Medium</div></div>
+  <div class="stat"><div class="n" style="color:var(--low)">6</div><div class="l">Low</div></div>
+  <div class="stat"><div class="n" style="color:var(--info)">3</div><div class="l">Informational</div></div>
+</div>
+
+<h2>Architecture (as reviewed)</h2>
+<div class="pipe">
+  <span class="stage">recovery</span><span class="arrow">→ work4a →</span>
+  <span class="stage">entrypoint</span><span class="arrow">→ batches →</span>
+  <span class="stage">execution</span><span class="arrow">→ work1 →</span>
+  <span class="stage">serialization ×N (fan-out/fan-in)</span><span class="arrow">→ work2 →</span>
+  <span class="stage">persistence</span><span class="arrow">→ work3 →</span>
+  <span class="stage">completion (ack)</span><span class="arrow">→ work4b →</span>
+  <span class="stage">broadcast</span><span class="arrow">→ work5 →</span>
+  <span class="stage">terminal (recycle pools)</span>
+</div>
+<p><code>*contracts.Message</code> and <code>*unitOfWork</code> objects are drawn from <code>sync.Pool</code>s in execution and returned in terminal. Persistence and broadcast retry forever with capped exponential backoff + jitter until context cancellation. <code>sqladapter</code> implements Writer (multi-row INSERT, IDs derived from <code>LAST_INSERT_ID()</code> + stride), Dispatcher (publish then <code>UPDATE … SET dispatched</code>), and Recovery (<code>SELECT … WHERE dispatched IS NULL</code>).</p>
+
+<h2>Findings</h2>
+
+<div id="progressPanel">
+  <h3>Remediation progress <span id="progressCount" style="color:var(--muted);font-weight:normal"></span></h3>
+  <div id="progressBar"><div class="seg-fixed"></div><div class="seg-inprogress"></div><div class="seg-wontfix"></div></div>
+  <div id="progressLegend">
+    <span><span class="dot" style="background:var(--low)"></span>Fixed <b id="nFixed">0</b></span>
+    <span><span class="dot" style="background:var(--high)"></span>In progress <b id="nInProgress">0</b></span>
+    <span><span class="dot" style="background:var(--info)"></span>Won't fix <b id="nWontFix">0</b></span>
+    <span><span class="dot" style="background:var(--panel2);border:1px solid var(--border)"></span>Open <b id="nOpen">0</b></span>
+  </div>
+  <div id="progressHint">Status lives in this file (each finding's <code>data-state</code> attribute) and is committed to git — updated as issues are resolved. Last status update: 2026-06-12.</div>
+</div>
+<div class="filters" id="filters">
+  <button data-sev="ALL" class="active">All (16)</button>
+  <button data-sev="CRITICAL">Critical (1)</button>
+  <button data-sev="HIGH">High (2)</button>
+  <button data-sev="MEDIUM">Medium (4)</button>
+  <button data-sev="LOW">Low (6)</button>
+  <button data-sev="INFO">Info (3)</button>
+  <button id="expandAll">Expand all</button>
+</div>
+
+<!-- F1 -->
+<details class="finding CRITICAL" data-state="open" open>
+  <summary><span class="badge">CRITICAL</span> F1 — Recycled pooled messages retain a stale <code>Type</code>; wrong type names are persisted to the database <span class="verified">REPRODUCED</span><span class="loc">01_execution.go:51-58 · 06_terminal.go:24-29 · sqladapter/writer.go:84-86</span></summary>
+  <div>
+    <p>The execution stage takes a <code>*contracts.Message</code> from the pool and resets only <code>Value</code> and <code>Content</code>:</p>
+<pre><code>message := this.newMessage()
+message.Value = result
+message.Content.Reset()        // Type, ID, ContentType NOT cleared</code></pre>
+    <p>The terminal stage returns messages to the pool with all fields intact. Meanwhile, <code>sqladapter.Writer</code> assigns <code>Type</code> <em>only when it is empty</em>:</p>
+<pre><code>if message.Type == "" {
+    message.Type = this.typeNames[reflect.TypeOf(message.Value)]
+}</code></pre>
+    <p>So the first trip through the pipeline writes <code>Type</code> onto the pooled object; every subsequent reuse of that object for a <em>different</em> value type carries the previous type name into the <code>INSERT</code>. Recovered messages (which arrive with <code>Type</code> set from the DB) are also recycled into the same pool by terminal, seeding the pool with stale types from the very first moments of process life.</p>
+    <p><strong>Reproduction</strong> (temporary test, since removed): a pipeline with one handler emitting 50 <code>eventA</code> then 50 <code>eventB</code>, single serializer, fake writer following the sqladapter pattern:</p>
+<pre><code>zz_repro_test.go:108: message 50: got Type="type-A" want "type-B"
+zz_repro_test.go:118: distinct message pointers: 4, reused: 4, total writes: 100
+zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
+--- FAIL: TestZZRepro_PooledMessageTypeStale</code></pre>
+    <p>Only 4 distinct message objects served all 100 messages — pool reuse is the norm, not the exception. In production, rows in <code>Messages</code> would be persisted (and recovered/redispatched after a crash) under the wrong type name, which downstream consumers use to deserialize. <strong>This corrupts the durable record.</strong></p>
+    <p><em>Why existing tests miss it:</em> the race detector's <code>sync.Pool</code> instrumentation randomly drops Puts, and <code>pipeline_test.go</code> uses a Serializer/Writer that never reads or sets <code>Type</code>. The 100%-coverage figure measures statements, not field-lifecycle correctness.</p>
+    <p><em>Note:</em> <code>ID</code> is equally stale on reuse but is unconditionally overwritten by <code>Writer.assignIDs</code>; <code>ContentType</code> is unconditionally set by serialization. <code>Type</code> is the only field guarded by an is-empty check. The reset point in execution (or the pool's recycle path) is the natural place to clear all identity fields.</p>
+  </div>
+</details>
+
+<!-- F2 -->
+<details class="finding HIGH" data-state="open">
+  <summary><span class="badge">HIGH</span> F2 — No validation of <code>Configuration</code>: <code>SerializerCount(0)</code> silently builds a deadlocked pipeline <span class="inspect">BY INSPECTION</span><span class="loc">pipeline.go:25-74 · fanout.go:11-21 · config.go</span></summary>
+  <div>
+    <p>None of the option values are validated. The worst case: <code>Options.SerializerCount(0)</code> produces a fan-out with zero workers; <code>newFanIn</code> with zero inputs closes <code>work2</code> immediately, so persistence/completion/broadcast/terminal all exit cleanly — while the execution stage blocks forever on its first send to the never-consumed <code>work1</code>. Callers of <code>BlockingEntrypoint.Handle</code> then hang for the life of the process with no observation emitted. Other un-validated edges:</p>
+    <table>
+      <tr><th>Input</th><th>Effect</th></tr>
+      <tr><td><code>BurstCapacity(0)</code></td><td><code>admit()</code> computes <code>0/0 = NaN</code>; <code>NaN &gt;= threshold</code> is false, so admission never sheds, and every <code>Handle</code> send rendezvouses unbuffered</td></tr>
+      <tr><td>Negative capacities</td><td><code>make(chan, n)</code> panics at <code>Build</code> (acceptable, but unfriendly)</td></tr>
+      <tr><td><code>ShedThreshold(0)</code></td><td>Sheds <em>all</em> HTTP traffic (0/1024 ≥ 0) — possibly intended, but a footgun next to the documented range [0, 1]</td></tr>
+      <tr><td><code>ExecutionUnitSize(0)</code></td><td>Coalescing condition <code>len(completions) &lt; 0</code> never true — degrades to unit-per-batch (harmless but undocumented)</td></tr>
+    </table>
+    <p>Since this is a foundational library about to be consumed by other teams, <code>New</code>/<code>Build</code> silently accepting a configuration that can never move a message is the kind of hole that costs someone an afternoon.</p>
+  </div>
+</details>
+
+<!-- F3 -->
+<details class="finding HIGH" data-state="open">
+  <summary><span class="badge">HIGH</span> F3 — Default <code>SerializerCount=4</code> destroys cross-unit ordering between execution and persistence <span class="inspect">BY INSPECTION</span><span class="loc">fanout.go:35-46 · pipeline.go:47</span></summary>
+  <div>
+    <p>Units of work are fanned out across 4 serialization goroutines and fanned back in nondeterministically (<code>fanIn</code> merges with a <code>WaitGroup</code> over independent range loops). Two units executed in order A, B can arrive at persistence as B, A — so database <code>id</code> order (the stream order seen by recovery and by any consumer reading the <code>Messages</code> table) does not reflect execution order whenever more than one unit is in flight.</p>
+    <p>For a store-and-forward <em>event</em> pipeline this is a significant semantic: if any consumer assumes "ascending id = causal order" (a natural assumption given the auto-increment ID scheme and the ordered recovery query), the default configuration violates it under load. The integration tests assert ordering only with strictly sequential blocking calls (one unit in flight), so this is invisible to the suite.</p>
+    <p>Within a single unit, message order is preserved (the serializers iterate <code>unit.results</code> in order, and persistence appends in order). The hazard is exclusively <em>between</em> units. Either the ordering contract should be documented as "per-unit only," or serializer fan-out needs an order-preserving fan-in — worth an explicit decision before tagging, since it shapes consumer expectations forever.</p>
+  </div>
+</details>
+
+<!-- F4 -->
+<details class="finding MEDIUM" data-state="open">
+  <summary><span class="badge">MEDIUM</span> F4 — Persistence abandonment strands blocked <code>Handle</code> callers forever <span class="inspect">BY INSPECTION</span><span class="loc">03_persistence.go:40-46 · 00_entrypoint.go:71</span></summary>
+  <div>
+    <p>When the writer keeps failing and the context is cancelled, persistence abandons the unit and deliberately does not forward it (<code>continue</code> — correct for the no-ack/redelivery contract). But the dropped unit's <code>completions</code> are never invoked, and <code>entrypoint.Handle</code> intentionally ignores context cancellation (<code>waiter.Wait()</code> with no escape — see <code>TestHandle_IgnoresContextCancel</code>). Result: every MQ-delivery goroutine parked in <code>Handle</code> at abandonment time blocks <em>forever</em>. If the host process waits on those goroutines during shutdown, shutdown wedges; the operator's only recourse is a hard kill.</p>
+    <p>Likely tolerable if consumers are expected to die anyway after cancelling the context, but the contract "cancel the context to unwind" is only half-true today: it unwinds the pipeline stages, not the callers. Deserves either a fix (run completions on abandonment — the unit was not acked durably, but the <em>caller</em> contract is "blocks until durably stored," which can no longer ever happen) or a loud doc note on <code>BlockingEntrypoint</code>.</p>
+  </div>
+</details>
+
+<!-- F5 -->
+<details class="finding MEDIUM" data-state="open">
+  <summary><span class="badge">MEDIUM</span> F5 — A failing Recoverer at startup throttles the live pipeline to a standstill <span class="inspect">BY INSPECTION</span><span class="loc">05_broadcast.go:41-45 · recovery.go:49-61</span></summary>
+  <div>
+    <p><code>broadcast.Listen</code> fully drains the recovery channel (<code>work4a</code>) before touching live traffic (<code>work4b</code>). Recovery retries its query forever with backoff. If the database is unreachable at startup (the very scenario recovery exists for), <code>work4a</code> stays open, broadcast never starts on <code>work4b</code>, and after ~(2×buffer+2) units the whole pipeline backs up: completion blocks sending to <code>work4b</code>, then persistence blocks, then callers block. Live writes that <em>could</em> succeed (e.g., recovery DB ≠ writer DB, or a transient SELECT failure) are stalled behind recovery's retry loop.</p>
+    <p>In the common deployment (same DB for both) this is mostly moot — writes would fail too. But the coupling is invisible to operators: the symptoms are "persistence is fine, dispatching stopped" with only <code>RecoveryError</code> observations as the clue. Worth documenting, and note that <code>RecoveryError</code> wraps the raw error without a sentinel like <code>ErrRecovery</code> (inconsistent with persistence/broadcast — see F12).</p>
+  </div>
+</details>
+
+<!-- F6 -->
+<details class="finding MEDIUM" data-state="open">
+  <summary><span class="badge">MEDIUM</span> F6 — <code>Close()</code> can deadlock against a <code>Handle</code> blocked on a full work channel <span class="inspect">BY INSPECTION</span><span class="loc">00_entrypoint.go:59-73, 128-137</span></summary>
+  <div>
+    <p><code>Handle</code> holds the read lock <em>across</em> the channel send (<code>this.work &lt;- item</code>), which is what makes close-vs-send safe. The flip side: if the work channel is full because downstream is wedged (see F4/F5, or a dispatcher outage with an uncancelled context), <code>Handle</code> blocks holding <code>RLock</code>, and <code>Close()</code> blocks forever acquiring <code>Lock</code>. Shutdown ordering then never reaches the stages that would unwedge things. The same applies to <code>await</code>'s enqueue path only until its context is cancelled (it selects on <code>ctx.Done()</code>), so HTTP callers self-rescue; MQ-style <code>Handle</code> callers do not.</p>
+    <p>This is the corollary of the (well-tested) design decision that <code>Handle</code> ignores cancellation. The triple {full channel, wedged downstream, Close} is plausible during an incident — exactly when an operator tries a graceful restart.</p>
+  </div>
+</details>
+
+<!-- F7 -->
+<details class="finding MEDIUM" data-state="open">
+  <summary><span class="badge">MEDIUM</span> F7 — Recovery loads the entire undispatched backlog into memory in one query <span class="inspect">BY INSPECTION</span><span class="loc">sqladapter/recovery.go:22-58 · pipeline/recovery.go:40-47</span></summary>
+  <div>
+    <p>The recovery SELECT has no LIMIT and accumulates every row (full payloads) into a slice before the pipeline chunks it (<code>recoveryBatchSize=64</code> chunks the <em>output</em>, not the read). After an extended dispatcher outage — precisely when backlog is largest — startup memory is O(backlog). With <code>mediumblob</code> payloads up to 16MB each, a few thousand stuck rows can be gigabytes. A crash-loop here is self-reinforcing: OOM at startup prevents the dispatch that would shrink the backlog. A LIMIT + loop-until-empty (or streaming rows into units) would bound it; today nothing does.</p>
+  </div>
+</details>
+
+<!-- F8 -->
+<details class="finding LOW" data-state="open">
+  <summary><span class="badge">LOW</span> F8 — <code>initialContentBufferSize</code> allocates 1024 bytes of <em>content</em>, not capacity <span class="inspect">BY INSPECTION</span><span class="loc">pipeline.go:38-40</span></summary>
+  <div>
+<pre><code>return &amp;contracts.Message{Content: bytes.NewBuffer(make([]byte, initialContentBufferSize))}</code></pre>
+    <p><code>bytes.NewBuffer</code> treats its argument as initial <em>contents</em>: a fresh pooled message starts with 1024 zero bytes readable in <code>Content</code>. Execution's <code>Content.Reset()</code> hides this today, so it is latent rather than live — but any future code path that reads a fresh message's Content before reset (or a Writer that handles a never-serialized message) sees 1KB of zeros. The intent is plainly <code>make([]byte, 0, initialContentBufferSize)</code>.</p>
+  </div>
+</details>
+
+<!-- F9 -->
+<details class="finding LOW" data-state="open">
+  <summary><span class="badge">LOW</span> F9 — Routing silently no-ops when the prefixed method and the generic <code>Execute</code>/<code>Apply</code> disagree <span class="inspect">BY INSPECTION</span><span class="loc">scanner.go:8-48 · routing.go:35-57</span></summary>
+  <div>
+    <p>The scanner uses <code>ExecuteXxx</code>/<code>ApplyXxx</code> method <em>signatures</em> only to build the type→handler map; dispatch then calls the handler's <em>generic</em> <code>Execute(any, func(...any))</code>. Two silent failure modes follow:</p>
+    <ul>
+      <li>A type with an <code>ExecuteRenewal(Renewal, func(...any))</code> method whose generic <code>Execute</code> switch forgets the <code>Renewal</code> case: the message routes, then vanishes without a trace (no observation, no panic).</li>
+      <li>A prefixed method whose message parameter is an <em>interface</em> type: the map key is the interface type, but lookup uses <code>reflect.TypeOf(message)</code> (always concrete) — never matches, silently dropped.</li>
+      <li>A type with prefixed methods that forgets to implement the generic interface at all is skipped entirely by <code>scan</code> (the <code>v.(executor)</code> assertion) — again silently.</li>
+    </ul>
+    <p>The double bookkeeping (prefixed method for discovery + hand-written type switch for dispatch) is an inconsistency-by-construction; at minimum the build step could fail loudly when a registered type has discoverable methods but no generic interface, or when types route to nothing.</p>
+  </div>
+</details>
+
+<!-- F10 -->
+<details class="finding LOW" data-state="open">
+  <summary><span class="badge">LOW</span> F10 — sqladapter <code>Writer</code>/<code>Dispatcher</code> are stateful and not safe for concurrent use, undocumented <span class="inspect">BY INSPECTION</span><span class="loc">sqladapter/writer.go:18-26 · sqladapter/dispatcher.go:17-22</span></summary>
+  <div>
+    <p>Both reuse instance-level <code>statement</code>/<code>args</code> buffers across calls. The pipeline invokes each from exactly one goroutine, so this is correct <em>in situ</em> — but they are exported types in a public module with no doc comment saying "single goroutine only." A consumer who shares one Writer across two pipelines (or calls it directly) gets silently interleaved SQL. One sentence of doc (like the pipeline's own <code>router</code> comment, which does this well) closes it.</p>
+  </div>
+</details>
+
+<!-- F11 -->
+<details class="finding LOW" data-state="open">
+  <summary><span class="badge">LOW</span> F11 — Dispatcher UPDATE ignores rows-affected; ID=0 messages mark nothing <span class="inspect">BY INSPECTION</span><span class="loc">sqladapter/dispatcher.go:56-59</span></summary>
+  <div>
+    <p>The <code>UPDATE … WHERE dispatched IS NULL AND id IN (…)</code> result is discarded. If a message arrives with <code>ID=0</code> (a Writer that failed to assign, or a non-sqladapter Writer), the publish succeeds but the row is never marked — recovery republishes it on every restart, forever. The Writer side carefully validates <code>affected</code> and <code>first</code>; the Dispatcher's symmetric check is absent. (Re-running over already-marked rows is correctly idempotent thanks to the <code>dispatched IS NULL</code> guard; this is only about rows that <em>should</em> have matched and didn't.)</p>
+  </div>
+</details>
+
+<!-- F12 -->
+<details class="finding LOW" data-state="open">
+  <summary><span class="badge">LOW</span> F12 — Monitoring inconsistencies: no <code>ErrRecovery</code> sentinel; no <code>RecoveryAbandoned</code>/recovered-count observation <span class="inspect">BY INSPECTION</span><span class="loc">contracts/monitoring · pipeline/recovery.go:55-58</span></summary>
+  <div>
+    <p>Persistence and broadcast wrap errors in <code>ErrPersistence</code>/<code>ErrBroadcast</code> and emit <code>…Abandoned{Attempts}</code> on context cancellation. Recovery emits <code>RecoveryError</code> with the <em>raw</em> error (no sentinel) and abandons silently (returns nil with no observation). An operator alerting on "abandoned" observations misses the recovery case; an error-unwrap chain looking for module sentinels misses recovery errors. Also, nothing reports how many messages were recovered — useful operational signal that is currently invisible.</p>
+  </div>
+</details>
+
+<!-- F13 -->
+<details class="finding LOW" data-state="open">
+  <summary><span class="badge">LOW</span> F13 — Pooled slice growth is retained forever; one giant batch permanently inflates pool memory <span class="inspect">BY INSPECTION</span><span class="loc">01_execution.go:42-58 · 03_persistence.go:30 · sqladapter buffers</span></summary>
+  <div>
+    <p><code>unitOfWork.results</code>/<code>completions</code> are truncated with <code>[:0]</code> but never re-capped, so a single pathological batch (e.g., one command broadcasting 100k events) grows pooled slices that <code>sync.Pool</code> then retains across GC cycles (Go pools survive one GC). The same pattern applies to <code>persistence.buffer</code>, and the sqladapter <code>statement</code>/<code>args</code> buffers. Likewise the multi-row INSERT has no batch-size cap: a huge unit produces a single statement that can exceed MySQL's <code>max_allowed_packet</code>, which then <em>retries forever</em> (it is deterministic, not transient) — a poison-message loop. Low likelihood, but the failure mode is an unkillable retry loop with <code>PersistenceError</code> spam.</p>
+  </div>
+</details>
+
+<!-- F14 -->
+<details class="finding INFO" data-state="open">
+  <summary><span class="badge">INFO</span> F14 — Test-coverage holes behind the 100% statement figure <span class="loc">whole module</span></summary>
+  <div>
+    <p>The suite is genuinely strong (entrypoint concurrency torture test, WaitGroup-misuse regression, retry/backoff, scanner signature filtering, DB integration for all three adapters). What it does not cover, and what F1 proves matters:</p>
+    <table>
+      <tr><th>Gap</th><th>Why it matters</th></tr>
+      <tr><td>Pool-reuse field hygiene end-to-end</td><td>F1 lived here. No test sends &gt;1 value type through a real <code>Build</code> pipeline and asserts <code>Type</code>/<code>ID</code>/<code>ContentType</code> on what the Writer receives. The race detector actively suppresses pool reuse, so such a test must also run without <code>-race</code> (the <code>-short</code>/full split already exists to hang this on).</td></tr>
+      <tr><td>Concurrent callers through <code>Build</code></td><td><code>pipeline_test.go</code> is strictly sequential; ordering (F3), unit coalescing under load, and fan-in interleaving are unexercised.</td></tr>
+      <tr><td>Degenerate configurations</td><td>No test for SerializerCount 0, BurstCapacity 0, ShedThreshold 0 (F2).</td></tr>
+      <tr><td>sqladapter without DB</td><td>9.9% coverage in <code>-short</code> mode: a CI run without docker silently skips nearly the whole package; consider making that loud.</td></tr>
+      <tr><td>Multi-writer ID contention</td><td>The stride/consecutive-ID assumption (writer.go:111-117) is documented but untested: no concurrent-connection insert test verifying assigned IDs match actual rows.</td></tr>
+    </table>
+  </div>
+</details>
+
+<!-- F15 -->
+<details class="finding INFO" data-state="open">
+  <summary><span class="badge">INFO</span> F15 — Minor inconsistencies and dead weight <span class="loc">various</span></summary>
+  <div>
+    <ul>
+      <li><code>router.Apply</code> (routing.go:29-33) is never called by the pipeline — only by its own tests. Either it is future API (then say so) or it is dead code shipping in v2.0.0.</li>
+      <li><code>contracts.Monitor</code> is invoked concurrently from entrypoint, serialization (×N), persistence, broadcast, and recovery goroutines, but the interface doc does not state that implementations must be safe for concurrent use. The test fixtures all lock; consumers must too.</li>
+      <li><code>Recovery</code> (internal/pipeline) is the only exported stage type in an internal package — harmless, but inconsistent with the "every internal stage type is unexported" claim in the package doc of config.go.</li>
+      <li><code>generic.Drain</code> is exported (within internal/) but unused by the pipeline — test-only utility living in prod code.</li>
+      <li>Recovery hard-codes <code>ContentType: "application/json"</code> with a clear TODO-style comment — fine for now, but it will silently mislabel payloads the moment a non-JSON serializer is configured. The comment acknowledges this; flagging so it makes the schema-migration backlog.</li>
+    </ul>
+  </div>
+</details>
+
+<!-- F16 -->
+<details class="finding INFO" data-state="open">
+  <summary><span class="badge">INFO</span> F16 — Things checked that are <em>fine</em> (so you don't have to re-check)</summary>
+  <div>
+    <ul>
+      <li><strong>Close-vs-send race:</strong> <code>Handle</code>/<code>await</code> hold <code>RLock</code> across the send; <code>Close</code> takes <code>Lock</code> before <code>close(work)</code> — no send-on-closed-channel possible. Idempotent Close tested.</li>
+      <li><strong>Departed-caller waiter pooling:</strong> the deliberate non-Put of the waiter on in-flight departure (entrypoint.go:101-107) is correct and protected by an 16k-iteration stress test that trips the runtime's WaitGroup misuse detector if regressed. Nice work.</li>
+      <li><strong>backoff():</strong> attempt 1 → 0.5–1s, capped at 15–30s; <code>rand.N</code> scope always positive; no overflow (cap at 6 doublings).</li>
+      <li><strong>Writer panic safety:</strong> <code>recover()</code> in <code>Write</code> converts legacyWrite panics into rollback + error; the named-return error path rolls back on every failure; commit errors propagate. DB tests cover panic, rollback, and stride paths.</li>
+      <li><strong>Shutdown drain:</strong> stage-by-stage <code>defer close(output)</code> chain means a single <code>entrypoint.Close()</code> drains everything in order; verified by inspection and by <code>TestZeroOptionsPipelineRunsInertly</code> + integration shutdown tests.</li>
+      <li><strong>At-least-once dispatch:</strong> publish-then-mark with <code>dispatched IS NULL</code> guard means a crash between the two yields a duplicate publish, never a lost message — consistent with the store-and-forward contract.</li>
+      <li><strong>Race detector:</strong> full suite (including DB integration) clean under <code>-race</code>.</li>
+      <li><strong>Serialization panic policy:</strong> deliberate, documented in three places, tracked before panicking. Agree with the design.</li>
+    </ul>
+  </div>
+</details>
+
+<h2>Suggested order of attack (for the proposal phase)</h2>
+<table>
+  <tr><th>Priority</th><th>Item</th><th>Effort</th></tr>
+  <tr><td>1</td><td>F1 — clear <code>Type</code>/<code>ID</code>/<code>ContentType</code> at the pool-reset point; add the non-<code>-race</code> pool-hygiene end-to-end test</td><td>Small</td></tr>
+  <tr><td>2</td><td>F2 — validate/clamp configuration in <code>Build</code> (or panic loudly)</td><td>Small</td></tr>
+  <tr><td>3</td><td>F3 — decide + document the ordering contract (or make fan-in order-preserving)</td><td>Decision</td></tr>
+  <tr><td>4</td><td>F4/F6 — decide the blocked-caller story on abandonment/shutdown; document <code>BlockingEntrypoint</code></td><td>Medium</td></tr>
+  <tr><td>5</td><td>F7, F11, F12 — recovery LIMIT loop, dispatcher rows-affected, monitoring symmetry</td><td>Small each</td></tr>
+  <tr><td>6</td><td>F8–F10, F13, F15 — hygiene sweep</td><td>Small</td></tr>
+</table>
+
+</main>
+<footer>Generated by adversarial pre-release review · smarty/harness v2 · 2026-06-12 · repro test was removed after capture; working tree left clean</footer>
+<script>
+  const buttons = document.querySelectorAll('#filters button[data-sev]');
+  buttons.forEach(b => b.addEventListener('click', () => {
+    buttons.forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    const sev = b.dataset.sev;
+    document.querySelectorAll('details.finding').forEach(d => {
+      d.style.display = (sev === 'ALL' || d.classList.contains(sev)) ? '' : 'none';
+    });
+  }));
+  let expanded = false;
+  document.getElementById('expandAll').addEventListener('click', function () {
+    expanded = !expanded;
+    document.querySelectorAll('details.finding').forEach(d => d.open = expanded);
+    this.textContent = expanded ? 'Collapse all' : 'Expand all';
+  });
+
+  // --- completion status tracking ---
+  // Status is authoritative in the markup: each finding's data-state attribute
+  // ("open" | "inprogress" | "fixed" | "wontfix") is edited in this file and
+  // committed to git as issues are resolved. The chips below merely render it.
+  const LABELS = { open: 'OPEN', inprogress: 'IN PROGRESS', fixed: 'FIXED', wontfix: "WON'T FIX" };
+  const findings = [...document.querySelectorAll('details.finding')];
+
+  findings.forEach(d => {
+    const state = d.dataset.state || 'open';
+    const chip = document.createElement('span');
+    chip.className = 'status';
+    chip.dataset.state = state;
+    chip.textContent = LABELS[state] || state.toUpperCase();
+    chip.title = 'Status is recorded in this file (data-state attribute) and committed to git';
+    d.querySelector('summary .badge').after(chip);
+  });
+
+  function refreshProgress() {
+    const counts = { open: 0, inprogress: 0, fixed: 0, wontfix: 0 };
+    findings.forEach(d => counts[d.dataset.state]++);
+    const total = findings.length;
+    const resolved = counts.fixed + counts.wontfix;
+    document.getElementById('nFixed').textContent = counts.fixed;
+    document.getElementById('nInProgress').textContent = counts.inprogress;
+    document.getElementById('nWontFix').textContent = counts.wontfix;
+    document.getElementById('nOpen').textContent = counts.open;
+    document.getElementById('progressCount').textContent =
+      '— ' + resolved + ' of ' + total + ' resolved' + (counts.inprogress ? ' (' + counts.inprogress + ' in progress)' : '');
+    const bar = document.getElementById('progressBar');
+    bar.querySelector('.seg-fixed').style.width = (100 * counts.fixed / total) + '%';
+    bar.querySelector('.seg-inprogress').style.width = (100 * counts.inprogress / total) + '%';
+    bar.querySelector('.seg-wontfix').style.width = (100 * counts.wontfix / total) + '%';
+  }
+  refreshProgress();
+</script>
+</body>
+</html>
