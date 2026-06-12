@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"bytes"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -19,9 +20,10 @@ func TestExecutionFixture(t *testing.T) {
 
 type ExecutionFixture struct {
 	*gunit.Fixture
-	input   chan *batch
-	output  chan *unitOfWork
-	subject *execution
+	input     chan *batch
+	output    chan *unitOfWork
+	typeNames map[reflect.Type]string
+	subject   *execution
 
 	executeMu      sync.Mutex
 	executeCalls   []any
@@ -37,7 +39,7 @@ func (this *ExecutionFixture) getMessage() *contracts.Message {
 	return &contracts.Message{
 		ID:          42,
 		Type:        "stale type",
-		Value:       "stale value",
+		Value:       []byte("stale value"),
 		Content:     bytes.NewBufferString("stale content"),
 		ContentType: "stale content type",
 	}
@@ -46,7 +48,10 @@ func (this *ExecutionFixture) getMessage() *contracts.Message {
 func (this *ExecutionFixture) Setup() {
 	this.input = make(chan *batch, 8)
 	this.output = make(chan *unitOfWork, 8)
-	this.subject = newExecution(this, 64, this.getUnit, this.getMessage, this.input, this.output, this)
+	this.typeNames = map[reflect.Type]string{
+		reflect.TypeOf(""): "app:basic-string",
+	}
+	this.subject = newExecution(this, 64, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this)
 }
 
 func (this *ExecutionFixture) Execute(message any, broadcast func(...any)) {
@@ -86,7 +91,7 @@ func (this *ExecutionFixture) TestSingleBatchProducesUnitOfWork() {
 
 	message := unit.results[0]
 	this.So(message.ID, should.Equal, 0)
-	this.So(message.Type, should.Equal, "")
+	this.So(message.Type, should.Equal, "app:basic-string")
 	this.So(message.Value, should.Equal, "result-A")
 	this.So(message.Content.String(), should.Equal, "")
 	this.So(message.ContentType, should.Equal, "")
@@ -99,7 +104,7 @@ func (this *ExecutionFixture) TestUnitFlushesWhenMaxUnitSizeReached() {
 	this.input <- &batch{instructions: []any{"m3"}, complete: func() {}}
 	close(this.input)
 
-	this.subject = newExecution(this, 2, this.getUnit, this.getMessage, this.input, this.output, this)
+	this.subject = newExecution(this, 2, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this)
 	go this.subject.Listen()
 
 	units := this.drain()

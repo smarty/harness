@@ -54,7 +54,7 @@ func (this *ConfigFixture) TestDefaultCollaboratorsAreNop() {
 
 func (this *ConfigFixture) TestTypesOptionStoresValuesVerbatim() {
 	cfg := this.apply(Options.Types("a", 42, struct{}{}))
-	this.So(cfg.Types, should.Equal, []any{"a", 42, struct{}{}})
+	this.So(cfg.DomainTypes, should.Equal, []any{"a", 42, struct{}{}})
 }
 
 func (this *ConfigFixture) TestTunableOptionsOverrideDefaults() {

@@ -47,7 +47,7 @@ func (this *PipelineFixture) Setup() {
 		Serializer:             this,
 		Writer:                 this,
 		Dispatcher:             this,
-		Types:                  []any{this},
+		DomainTypes:            []any{this},
 		BurstCapacity:          1024,
 		PipelineBufferCapacity: 4,
 		ExecutionUnitSize:      64,

@@ -56,7 +56,7 @@ type option func(*pipeline.Configuration)
 // Types registers the domain objects whose Execute.../Apply... methods drive
 // the pipeline. They are passed verbatim to newRouter(...) at build time.
 func (singleton) Types(value ...any) option {
-	return func(this *pipeline.Configuration) { this.Types = value }
+	return func(this *pipeline.Configuration) { this.DomainTypes = value }
 }
 
 // Monitor sets the Monitor collaborator that receives pipeline observations

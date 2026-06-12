@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"reflect"
+
 	"github.com/smarty/harness/v2/contracts"
 )
 
@@ -9,6 +11,7 @@ type execution struct {
 	maxUnitSize int
 	newUnit     func() *unitOfWork
 	newMessage  func() *contracts.Message
+	typeNames   map[reflect.Type]string
 	input       chan *batch
 	output      chan *unitOfWork
 	executor    executor
@@ -19,6 +22,7 @@ func newExecution(
 	maxUnitSize int,
 	newUnit func() *unitOfWork,
 	newMessage func() *contracts.Message,
+	typeNames map[reflect.Type]string,
 	input chan *batch,
 	output chan *unitOfWork,
 	exec executor,
@@ -28,6 +32,7 @@ func newExecution(
 		maxUnitSize: maxUnitSize,
 		newUnit:     newUnit,
 		newMessage:  newMessage,
+		typeNames:   typeNames,
 		input:       input,
 		output:      output,
 		executor:    exec,
@@ -52,7 +57,7 @@ func (this *execution) Listen() {
 				for _, result := range outgoing {
 					message := this.newMessage()
 					message.ID = 0
-					message.Type = ""
+					message.Type = this.typeNames[reflect.TypeOf(result)]
 					message.Value = result
 					message.Content.Reset()
 					message.ContentType = ""

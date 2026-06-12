@@ -3,6 +3,7 @@ package pipeline
 import (
 	"bytes"
 	"context"
+	"reflect"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/generic"
@@ -14,7 +15,8 @@ type Configuration struct {
 	Serializer             contracts.Serializer
 	Writer                 contracts.Writer
 	Dispatcher             contracts.Dispatcher
-	Types                  []any
+	MessageTypes           map[reflect.Type]string
+	DomainTypes            []any
 	BurstCapacity          int
 	PipelineBufferCapacity int
 	ExecutionUnitSize      int
@@ -43,7 +45,7 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 	var (
 		recovery    = newRecovery(ctx, config.Recoverer, recoveryBatchSize, work4a, wait, config.Monitor)
 		entrypoint  = newEntrypoint(config.Monitor, batches, config.ShedThreshold)
-		executor    = newExecution(config.Monitor, config.ExecutionUnitSize, unitPool.Get, messagePool.Get, batches, work1, newRouter(config.Types...))
+		executor    = newExecution(config.Monitor, config.ExecutionUnitSize, unitPool.Get, messagePool.Get, config.MessageTypes, batches, work1, newRouter(config.DomainTypes...))
 		serializers = newFanOut(serializationFactory(config.Monitor, config.Serializer), config.SerializerCount, config.PipelineBufferCapacity, work1, work2)
 		persistence = newPersistence(ctx, config.Monitor, work2, work3, config.Writer, wait)
 		completion  = newCompletion(work3, work4b)
