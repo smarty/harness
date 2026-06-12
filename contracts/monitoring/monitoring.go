@@ -27,6 +27,8 @@ type (
 		Attempt int
 		Error   error
 	}
+	RecoveryAbandoned struct{ Attempts int }
+	RecoveryComplete  struct{ Count int }
 )
 
 var (
@@ -39,4 +41,5 @@ var (
 	ErrSerialization = errors.New("harness: serialization error")
 	ErrPersistence   = errors.New("harness: persistence error")
 	ErrBroadcast     = errors.New("harness: broadcast error")
+	ErrRecovery      = errors.New("harness: recovery error")
 )

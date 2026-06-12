@@ -47,6 +47,16 @@ type (
 
 // Collaborator interfaces — callers supply real implementations via Options.*
 type (
+	// Recoverer loads stored-but-undispatched messages at startup; the pipeline
+	// dispatches them before any live traffic to preserve dispatch order.
+	// Recover is retried with backoff until it succeeds or the pipeline context
+	// is cancelled, and while it fails, dispatching is stalled and the pipeline
+	// deliberately backs up: the Recoverer reads from the same datastore the
+	// Writer writes to, so when recovery is impossible, durable writes are too,
+	// and there is no live work worth admitting. Operators see RecoveryError
+	// observations (wrapping monitoring.ErrRecovery) until the datastore is
+	// restored, then RecoveryComplete; shutdown during the retry loop emits
+	// RecoveryAbandoned and the next start retries recovery.
 	Recoverer interface {
 		Recover(context.Context) ([]*Message, error)
 	}

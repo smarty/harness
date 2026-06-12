@@ -184,6 +184,8 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
 <template id="body-F5">
     <p><code>broadcast.Listen</code> fully drains the recovery channel (<code>work4a</code>) before touching live traffic (<code>work4b</code>). Recovery retries its query forever with backoff. If the database is unreachable at startup (the very scenario recovery exists for), <code>work4a</code> stays open, broadcast never starts on <code>work4b</code>, and after ~(2×buffer+2) units the whole pipeline backs up: completion blocks sending to <code>work4b</code>, then persistence blocks, then callers block. Live writes that <em>could</em> succeed (e.g., recovery DB ≠ writer DB, or a transient SELECT failure) are stalled behind recovery's retry loop.</p>
     <p>In the common deployment (same DB for both) this is mostly moot — writes would fail too. But the coupling is invisible to operators: the symptoms are "persistence is fine, dispatching stopped" with only <code>RecoveryError</code> observations as the clue. Worth documenting, and note that <code>RecoveryError</code> wraps the raw error without a sentinel like <code>ErrRecovery</code> (inconsistent with persistence/broadcast — see F12).</p>
+    <hr>
+    <p><strong>RESOLVED 2026-06-12 — documented as deliberate backpressure.</strong> Decision: the Recoverer reads from the same datastore the Writer writes to, so if undispatched messages cannot be recovered, new messages cannot be durably written either — a pipeline that backs up behind a failing Recoverer is the correct response, and there is no live work worth admitting ahead of recovery. The "recovery DB ≠ writer DB" edge above is outside the contract by definition now. Documented in three places: the public <code>contracts.Recoverer</code> interface (dispatch-order guarantee, retry-until-cancelled loop, the deliberate stall, and the observations operators will see), <code>Recovery.recover</code> (the full backpressure chain and the operator symptom signature), and <code>broadcast.Listen</code> (why startup drains before live traffic). The sentinel inconsistency noted above was fixed under F12, so the retry window is now bounded by <code>RecoveryError</code> (wrapping <code>ErrRecovery</code>) observations and terminated by <code>RecoveryComplete</code> or <code>RecoveryAbandoned</code>.</p>
 </template>
 
 <template id="body-F6">
@@ -221,6 +223,8 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
 
 <template id="body-F12">
     <p>Persistence and broadcast wrap errors in <code>ErrPersistence</code>/<code>ErrBroadcast</code> and emit <code>…Abandoned{Attempts}</code> on context cancellation. Recovery emits <code>RecoveryError</code> with the <em>raw</em> error (no sentinel) and abandons silently (returns nil with no observation). An operator alerting on "abandoned" observations misses the recovery case; an error-unwrap chain looking for module sentinels misses recovery errors. Also, nothing reports how many messages were recovered — useful operational signal that is currently invisible.</p>
+    <hr>
+    <p><strong>RESOLVED 2026-06-12 — recovery monitoring is now symmetric with persistence/broadcast.</strong> <code>RecoveryError</code> wraps the new <code>monitoring.ErrRecovery</code> sentinel (same <code>fmt.Errorf("%w: %w", …)</code> shape as the other stations); abandonment at context cancellation emits the new <code>monitoring.RecoveryAbandoned{Attempts}</code> before the station closes its output; and every successful recovery emits the new <code>monitoring.RecoveryComplete{Count}</code> — including <code>Count: 0</code>, so operators can confirm recovery ran clean rather than not at all. Verified by <code>RecoveryFixture</code> unit tests (sentinel wrapping on both retry and abandonment paths, the abandoned observation, complete counts) and the end-to-end <code>PipelineFixture</code>; full suite green under <code>-race</code>, 100% statement coverage retained in root and pipeline packages.</p>
 </template>
 
 <template id="body-F13">
@@ -300,9 +304,9 @@ $ go test       -run TestPoolFixture -count=20 ./internal/generic/   #  0 of 20 
       loc: '03_persistence.go:40-46 · 00_entrypoint.go:71',
     },
     {
-      id: 'F5', severity: 'MEDIUM', state: 'open', evidence: 'BY INSPECTION',
+      id: 'F5', severity: 'MEDIUM', state: 'fixed', evidence: 'BY INSPECTION',
       title: 'A failing Recoverer at startup throttles the live pipeline to a standstill',
-      loc: '05_broadcast.go:41-45 · recovery.go:49-61',
+      loc: '05_broadcast.go · recovery.go · contracts.go (Recoverer)',
     },
     {
       id: 'F6', severity: 'MEDIUM', state: 'open', evidence: 'BY INSPECTION',
@@ -335,9 +339,9 @@ $ go test       -run TestPoolFixture -count=20 ./internal/generic/   #  0 of 20 
       loc: 'sqladapter/dispatcher.go:56-59',
     },
     {
-      id: 'F12', severity: 'LOW', state: 'open', evidence: 'BY INSPECTION',
+      id: 'F12', severity: 'LOW', state: 'fixed', evidence: 'BY INSPECTION',
       title: 'Monitoring inconsistencies: no <code>ErrRecovery</code> sentinel; no <code>RecoveryAbandoned</code>/recovered-count observation',
-      loc: 'contracts/monitoring · pipeline/recovery.go:55-58',
+      loc: 'contracts/monitoring · pipeline/recovery.go',
     },
     {
       id: 'F13', severity: 'LOW', state: 'open', evidence: 'BY INSPECTION',

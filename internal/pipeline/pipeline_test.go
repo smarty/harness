@@ -212,7 +212,7 @@ func (this *PipelineFixture) TestPipelineShutsDownWithNoTraffic() {
 	this.So(len(this.executeCalls), should.Equal, 0)
 	this.So(len(this.writeCalls), should.Equal, 0)
 	this.So(len(this.dispatchCalls), should.Equal, 0)
-	this.So(this.tracked, should.BeEmpty)
+	this.So(this.tracked, should.Equal, []any{monitoring.RecoveryComplete{Count: 0}})
 }
 
 func (this *PipelineFixture) TestPipelineSerializesEachBroadcastResult() {

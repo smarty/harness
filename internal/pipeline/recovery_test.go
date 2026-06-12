@@ -69,7 +69,7 @@ func (this *RecoveryFixture) TestNothingToRecover_EmitsNoUnitAndClosesOutput() {
 
 	this.So(results, should.BeEmpty)
 	this.So(this.waits, should.BeEmpty)
-	this.So(this.tracked, should.BeEmpty)
+	this.So(this.tracked, should.Equal, []any{monitoring.RecoveryComplete{Count: 0}})
 }
 
 func (this *RecoveryFixture) TestRecoveredMessages_EmittedAsSingleUnitThenOutputClosed() {
@@ -80,7 +80,7 @@ func (this *RecoveryFixture) TestRecoveredMessages_EmittedAsSingleUnitThenOutput
 
 	this.So(results, should.Equal, this.recovered)
 	this.So(this.waits, should.BeEmpty)
-	this.So(this.tracked, should.BeEmpty)
+	this.So(this.tracked, should.Equal, []any{monitoring.RecoveryComplete{Count: 2}})
 }
 
 func (this *RecoveryFixture) TestRecoverError_TracksThenWaitsThenRetries() {
@@ -94,10 +94,15 @@ func (this *RecoveryFixture) TestRecoverError_TracksThenWaitsThenRetries() {
 	this.So(results, should.Equal, this.recovered)
 	this.So(this.recoverCalls, should.Equal, 3)
 	assertBackoffWaits(this.Fixture, this.waits, 2)
-	this.So(this.tracked, should.Equal, []any{
-		monitoring.RecoveryError{Attempt: 1, Error: boom},
-		monitoring.RecoveryError{Attempt: 2, Error: boom},
-	})
+	this.So(this.tracked, should.HaveLength, 3)
+	for n, observation := range this.tracked[:2] {
+		failure, ok := observation.(monitoring.RecoveryError)
+		this.So(ok, should.BeTrue)
+		this.So(failure.Error, should.WrapError, monitoring.ErrRecovery)
+		this.So(failure.Error, should.WrapError, boom)
+		this.So(failure.Attempt, should.Equal, n+1)
+	}
+	this.So(this.tracked[2], should.Equal, monitoring.RecoveryComplete{Count: 1})
 }
 
 func (this *RecoveryFixture) TestRecoverError_WaitFails_AbandonsAndClosesOutput() {
@@ -112,5 +117,11 @@ func (this *RecoveryFixture) TestRecoverError_WaitFails_AbandonsAndClosesOutput(
 	this.So(results, should.BeEmpty)
 	this.So(this.recoverCalls, should.Equal, 1)
 	assertBackoffWaits(this.Fixture, this.waits, 1)
-	this.So(this.tracked, should.Equal, []any{monitoring.RecoveryError{Attempt: 1, Error: boom}})
+	this.So(this.tracked, should.HaveLength, 2)
+	failure, ok := this.tracked[0].(monitoring.RecoveryError)
+	this.So(ok, should.BeTrue)
+	this.So(failure.Error, should.WrapError, monitoring.ErrRecovery)
+	this.So(failure.Error, should.WrapError, boom)
+	this.So(failure.Attempt, should.Equal, 1)
+	this.So(this.tracked[1], should.Equal, monitoring.RecoveryAbandoned{Attempts: 1})
 }
