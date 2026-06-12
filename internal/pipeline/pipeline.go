@@ -22,7 +22,6 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 		work4b  = make(chan *unitOfWork, config.PipelineBufferCapacity)
 		work5   = make(chan *unitOfWork, config.PipelineBufferCapacity)
 	)
-
 	var (
 		unitPool    = generic.NewPoolT(generic.NewT[unitOfWork])
 		messagePool = generic.NewPoolT(func() *contracts.Message {
@@ -30,33 +29,23 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 		})
 	)
 
-	var (
-		recovery    = newRecovery(ctx, config.Recoverer, recoveryBatchSize, work4a, wait, config.Monitor)
-		entrypoint  = newEntrypoint(config.Monitor, batches, config.ShedThreshold)
-		executor    = newExecution(config.Monitor, config.ExecutionUnitSize, unitPool.Get, messagePool.Get, config.MessageTypes, batches, work1, newRouter(config.DomainTypes...))
-		serializer  = newSerialization(config.Monitor, config.Serializer, work1, work2)
-		persistence = newPersistence(ctx, config.Monitor, work2, work3, config.Writer, wait)
-		completion  = newCompletion(work3, work4b)
-		broadcast   = newBroadcast(ctx, config.Monitor, work4a, work4b, work5, config.Dispatcher, wait)
-		terminal    = newTerminal(work5, unitPool.Put, messagePool.Put)
-	)
-
-	listeners := []contracts.Listener{
-		recovery,
-		entrypoint,
-		executor,
-		serializer,
-		persistence,
-		completion,
-		broadcast,
-		terminal,
-	}
-	adapter := newHTTPAdapter(entrypoint)
+	entry := newEntrypoint(config.Monitor, batches, config.ShedThreshold)
+	adapter := newHTTPAdapter(entry)
 	result = contracts.Pipeline{
 		SheddingHTTPWrapper: adapter.HTTPHandler,
 		SheddingEntrypoint:  adapter,
-		BlockingEntrypoint:  entrypoint,
-		Listeners:           listeners,
+		BlockingEntrypoint:  entry,
+		Listeners: []contracts.Listener{
+			newRecovery(ctx, config.Recoverer, recoveryBatchSize, work4a, wait, config.Monitor),
+			entry,
+			newExecution(config.Monitor, config.ExecutionUnitSize, unitPool.Get, messagePool.Get,
+				config.MessageTypes, batches, work1, newRouter(config.DomainTypes...)),
+			newSerialization(config.Monitor, config.Serializer, work1, work2),
+			newPersistence(ctx, config.Monitor, work2, work3, config.Writer, wait),
+			newCompletion(work3, work4b),
+			newBroadcast(ctx, config.Monitor, work4a, work4b, work5, config.Dispatcher, wait),
+			newTerminal(work5, unitPool.Put, messagePool.Put),
+		},
 	}
 	return result, nil
 }
