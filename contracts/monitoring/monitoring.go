@@ -29,7 +29,7 @@ type (
 )
 
 var (
-	ErrSerialization = errors.New("serialization error")
-	ErrPersistence   = errors.New("persistence error")
-	ErrBroadcast     = errors.New("broadcast error")
+	ErrSerialization = errors.New("harness: serialization error")
+	ErrPersistence   = errors.New("harness: persistence error")
+	ErrBroadcast     = errors.New("harness: broadcast error")
 )
