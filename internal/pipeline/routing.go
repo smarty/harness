@@ -3,7 +3,7 @@ package pipeline
 import "reflect"
 
 // router dispatches messages to Execute*/Apply* methods discovered reflectively
-// from the domain types registered via Options.Types(...). It is unexported
+// from the domain types registered via Options.DomainTypes(...). It is unexported
 // because callers never hold one directly — Build(ctx, cfg) constructs the sole
 // instance per pipeline and feeds it into the execution stage as its executor
 // collaborator. The router is not safe for concurrent use; the pipeline only

@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -42,6 +43,7 @@ func (this *ConfigFixture) TestDefaultsPopulateCapacities() {
 	this.So(cfg.ExecutionUnitSize, should.Equal, 64)
 	this.So(cfg.SerializerCount, should.Equal, 4)
 	this.So(cfg.ShedThreshold, should.Equal, 0.80)
+	this.So(cfg.MessageTypes, should.BeNil)
 }
 
 func (this *ConfigFixture) TestDefaultCollaboratorsAreNop() {
@@ -53,7 +55,7 @@ func (this *ConfigFixture) TestDefaultCollaboratorsAreNop() {
 }
 
 func (this *ConfigFixture) TestTypesOptionStoresValuesVerbatim() {
-	cfg := this.apply(Options.Types("a", 42, struct{}{}))
+	cfg := this.apply(Options.DomainTypes("a", 42, struct{}{}))
 	this.So(cfg.DomainTypes, should.Equal, []any{"a", 42, struct{}{}})
 }
 
@@ -64,12 +66,14 @@ func (this *ConfigFixture) TestTunableOptionsOverrideDefaults() {
 		Options.ExecutionUnitSize(8),
 		Options.SerializerCount(3),
 		Options.ShedThreshold(0.5),
+		Options.MessageTypes(map[reflect.Type]string{reflect.TypeOf(""): "simple-string"}),
 	)
 	this.So(cfg.BurstCapacity, should.Equal, 2)
 	this.So(cfg.PipelineBufferCapacity, should.Equal, 2)
 	this.So(cfg.ExecutionUnitSize, should.Equal, 8)
 	this.So(cfg.SerializerCount, should.Equal, 3)
 	this.So(cfg.ShedThreshold, should.Equal, 0.5)
+	this.So(cfg.MessageTypes, should.Equal, map[reflect.Type]string{reflect.TypeOf(""): "simple-string"})
 }
 
 func (this *ConfigFixture) TestCollaboratorOptionsOverrideDefaults() {
@@ -82,21 +86,21 @@ func (this *ConfigFixture) TestZeroOptionsPipelineRunsInertly() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pipeline := New(ctx)
+	inert := New(ctx)
 
 	done := make(chan struct{})
 	go func() {
 		var wg sync.WaitGroup
-		for _, listener := range pipeline.Listeners {
+		for _, listener := range inert.Listeners {
 			wg.Go(listener.Listen)
 		}
 		wg.Wait()
 		close(done)
 	}()
 
-	pipeline.BlockingEntrypoint.Handle(ctx, "payload")
-	pipeline.SheddingEntrypoint.Handle(ctx, "payload")
-	this.So(pipeline.BlockingEntrypoint.(interface{ Close() error }).Close(), should.BeNil)
+	inert.BlockingEntrypoint.Handle(ctx, "payload")
+	inert.SheddingEntrypoint.Handle(ctx, "payload")
+	this.So(inert.BlockingEntrypoint.(interface{ Close() error }).Close(), should.BeNil)
 	<-done
 }
 

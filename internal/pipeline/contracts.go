@@ -5,7 +5,7 @@ import (
 )
 
 // Internal interfaces — discovered reflectively from domain types
-// supplied via Options.Types(...)
+// supplied via Options.DomainTypes(...)
 type (
 	executor interface {
 		Execute(message any, broadcast func(...any))

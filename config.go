@@ -3,7 +3,7 @@
 // persistence, completion, broadcast, terminal) connected by buffered channels.
 //
 // Callers register domain objects whose Execute.../Apply... methods drive the
-// pipeline via Options.Types(...), and supply collaborators (Writer, Dispatcher,
+// pipeline via Options.DomainTypes(...), and supply collaborators (Writer, Dispatcher,
 // Serializer, Monitor) via the corresponding Options.*. All collaborators
 // default to a no-op implementation, so omitting them produces a runnable but
 // inert pipeline — useful for tests, but not for production.
@@ -29,13 +29,14 @@ package harness
 import (
 	"context"
 	"io"
+	"reflect"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/pipeline"
 )
 
 // New constructs a staged, store-and-forward message-handling pipeline.
-// Register domain types (handlers/observers) via Options.Types, and wire
+// Register domain types (handlers/observers) via Options.DomainTypes, and wire
 // real Writer, Dispatcher, Serializer, and Monitor collaborators via the
 // corresponding Options.* functions. Collaborators default to a shared
 // no-op implementation, so omitting them produces a runnable but inert
@@ -53,10 +54,16 @@ var Options singleton
 type singleton struct{}
 type option func(*pipeline.Configuration)
 
-// Types registers the domain objects whose Execute.../Apply... methods drive
+// DomainTypes registers the domain objects whose Execute.../Apply... methods drive
 // the pipeline. They are passed verbatim to newRouter(...) at build time.
-func (singleton) Types(value ...any) option {
+func (singleton) DomainTypes(value ...any) option {
 	return func(this *pipeline.Configuration) { this.DomainTypes = value }
+}
+
+// MessageTypes allows the caller to specify the names of message types produced
+// by the domain types for eventual persistence and publishing by the pipeline.
+func (singleton) MessageTypes(value map[reflect.Type]string) option {
+	return func(this *pipeline.Configuration) { this.MessageTypes = value }
 }
 
 // Monitor sets the Monitor collaborator that receives pipeline observations
