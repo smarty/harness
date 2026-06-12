@@ -2,12 +2,14 @@ package pipeline
 
 import (
 	"bytes"
+	"slices"
 	"sync"
 	"testing"
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/contracts"
+	"github.com/smarty/harness/v2/internal/generic"
 )
 
 func TestExecutionFixture(t *testing.T) {
@@ -57,10 +59,7 @@ func (this *ExecutionFixture) Track(observation any) {
 }
 
 func (this *ExecutionFixture) drain() (results []*unitOfWork) {
-	for unit := range this.output {
-		results = append(results, unit)
-	}
-	return results
+	return slices.Collect(generic.Drain(this.output))
 }
 
 func (this *ExecutionFixture) TestSingleBatchProducesUnitOfWork() {
