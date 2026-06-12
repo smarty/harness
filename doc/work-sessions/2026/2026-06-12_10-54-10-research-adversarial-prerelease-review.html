@@ -128,7 +128,7 @@
 </div>
 
 <!-- F1 -->
-<details class="finding CRITICAL" data-state="open" open>
+<details class="finding CRITICAL" data-state="inprogress" open>
   <summary><span class="badge">CRITICAL</span> F1 — Recycled pooled messages retain a stale <code>Type</code>; wrong type names are persisted to the database <span class="verified">REPRODUCED</span><span class="loc">01_execution.go:51-58 · 06_terminal.go:24-29 · sqladapter/writer.go:84-86</span></summary>
   <div>
     <p>The execution stage takes a <code>*contracts.Message</code> from the pool and resets only <code>Value</code> and <code>Content</code>:</p>
@@ -148,6 +148,9 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
     <p>Only 4 distinct message objects served all 100 messages — pool reuse is the norm, not the exception. In production, rows in <code>Messages</code> would be persisted (and recovered/redispatched after a crash) under the wrong type name, which downstream consumers use to deserialize. <strong>This corrupts the durable record.</strong></p>
     <p><em>Why existing tests miss it:</em> the race detector's <code>sync.Pool</code> instrumentation randomly drops Puts, and <code>pipeline_test.go</code> uses a Serializer/Writer that never reads or sets <code>Type</code>. The 100%-coverage figure measures statements, not field-lifecycle correctness.</p>
     <p><em>Note:</em> <code>ID</code> is equally stale on reuse but is unconditionally overwritten by <code>Writer.assignIDs</code>; <code>ContentType</code> is unconditionally set by serialization. <code>Type</code> is the only field guarded by an is-empty check. The reset point in execution (or the pool's recycle path) is the natural place to clear all identity fields.</p>
+    <hr>
+    <p><strong>Verification 2026-06-12 (commits <code>e72e6a4</code>…<code>bb7e81c</code>): mostly resolved, one gap remains.</strong> Execution now resets all message fields on pool retrieval and assigns <code>Type</code> from the <code>MessageTypes</code> map keyed on the outgoing <code>result</code> (an earlier order-of-operations bug — lookup keyed on the stale pooled <code>Value</code> — was fixed in the amended <code>bb7e81c</code>); the Writer no longer assigns types. The original repro (50 <code>eventA</code> then 50 <code>eventB</code> through <code>Build</code>, single serializer) now passes repeatedly with and without <code>-race</code>, with pool reuse confirmed.</p>
+    <p><strong>Remaining gap — unreachable from the public API:</strong> <code>pipeline.Configuration.MessageTypes</code> has no corresponding <code>harness.Options.MessageTypes(...)</code> setter, so consumers of <code>harness.New</code> get a nil map and every message is persisted with <code>Type=""</code> — silently, since the empty string satisfies the schema's <code>NOT NULL</code>. (<code>sqladapter.NewWriter</code> intentionally no longer takes a typeNames fallback, so the option setter is now the only path.)</p>
   </div>
 </details>
 
@@ -268,13 +271,14 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
 </details>
 
 <!-- F14 -->
-<details class="finding INFO" data-state="open">
+<details class="finding INFO" data-state="inprogress">
   <summary><span class="badge">INFO</span> F14 — Test-coverage holes behind the 100% statement figure <span class="loc">whole module</span></summary>
   <div>
+    <p><strong>Progress 2026-06-12:</strong> 1 of 5 gaps closed (pool-reuse field hygiene — see first row below). The other four remain open; F14 stays in progress until they are addressed or consciously waived.</p>
     <p>The suite is genuinely strong (entrypoint concurrency torture test, WaitGroup-misuse regression, retry/backoff, scanner signature filtering, DB integration for all three adapters). What it does not cover, and what F1 proves matters:</p>
     <table>
       <tr><th>Gap</th><th>Why it matters</th></tr>
-      <tr><td>Pool-reuse field hygiene end-to-end</td><td>F1 lived here. No test sends &gt;1 value type through a real <code>Build</code> pipeline and asserts <code>Type</code>/<code>ID</code>/<code>ContentType</code> on what the Writer receives. The race detector actively suppresses pool reuse, so such a test must also run without <code>-race</code> (the <code>-short</code>/full split already exists to hang this on).</td></tr>
+      <tr><td>✅ Pool-reuse field hygiene end-to-end</td><td><strong>Closed 2026-06-12:</strong> <code>internal/pipeline/pool_hygiene_test.go</code> (<code>PoolHygieneFixture</code>) now sends two value types through a real <code>Build</code> pipeline and asserts the <code>Type</code> seen by the Writer; it discriminated against both buggy iterations of the F1 fix before passing. Caveat retained: the race detector suppresses pool reuse, so the test is most effective in runs without <code>-race</code>. <em>(Original gap: F1 lived here — no test sent &gt;1 value type end-to-end and asserted message fields at the Writer.)</em></td></tr>
       <tr><td>Concurrent callers through <code>Build</code></td><td><code>pipeline_test.go</code> is strictly sequential; ordering (F3), unit coalescing under load, and fan-in interleaving are unexercised.</td></tr>
       <tr><td>Degenerate configurations</td><td>No test for SerializerCount 0, BurstCapacity 0, ShedThreshold 0 (F2).</td></tr>
       <tr><td>sqladapter without DB</td><td>9.9% coverage in <code>-short</code> mode: a CI run without docker silently skips nearly the whole package; consider making that loud.</td></tr>

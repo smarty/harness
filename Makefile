@@ -3,7 +3,10 @@
 test: fmt
 	go test -timeout=1s -short -race -covermode=atomic ./...
 
-test.db: test
+test.pool: test
+	go test -timeout=1s -run TestPoolHygieneFixture github.com/smarty/harness/v2/internal/pipeline
+
+test.db: test.pool
 	go test -timeout=30s -race -covermode=atomic github.com/smarty/harness/v2/sqladapter
 
 test.db.local:
