@@ -115,17 +115,6 @@
 <div class="filters" id="filters"></div>
 <div id="findings"></div>
 
-<h2>Suggested order of attack (for the proposal phase)</h2>
-<table>
-  <tr><th>Priority</th><th>Item</th><th>Effort</th></tr>
-  <tr><td>1</td><td>F1 — clear <code>Type</code>/<code>ID</code>/<code>ContentType</code> at the pool-reset point; add the non-<code>-race</code> pool-hygiene end-to-end test</td><td>Small</td></tr>
-  <tr><td>2</td><td>F2 — validate/clamp configuration in <code>Build</code> (or panic loudly)</td><td>Small</td></tr>
-  <tr><td>3</td><td>F3 — decide + document the ordering contract (or make fan-in order-preserving)</td><td>Decision</td></tr>
-  <tr><td>4</td><td>F4/F6 — decide the blocked-caller story on abandonment/shutdown; document <code>BlockingEntrypoint</code></td><td>Medium</td></tr>
-  <tr><td>5</td><td>F7, F11, F12 — recovery LIMIT loop, dispatcher rows-affected, monitoring symmetry</td><td>Small each</td></tr>
-  <tr><td>6</td><td>F8–F10, F13, F15 — hygiene sweep</td><td>Small</td></tr>
-</table>
-
 <!-- ================= finding bodies ================= -->
 
 <template id="body-F1">
