@@ -1,12 +1,10 @@
 #!/usr/bin/make -f
 
 test: fmt
-	go test -timeout=1s -short -race -covermode=atomic ./...
+	go test -timeout=1s -short -covermode=atomic       ./...
+	go test -timeout=1s -short -covermode=atomic -race ./...
 
-test.pool: test
-	go test -timeout=1s -run TestPoolHygieneFixture github.com/smarty/harness/v2/internal/pipeline
-
-test.db: test.pool
+test.db: test
 	go test -timeout=30s -race -covermode=atomic github.com/smarty/harness/v2/sqladapter
 
 test.db.local:
@@ -20,4 +18,4 @@ compile:
 
 build: test compile
 
-.PHONY: test fmt compile build
+.PHONY: test test.db test.db.local fmt compile build

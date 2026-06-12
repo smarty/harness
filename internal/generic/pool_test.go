@@ -40,6 +40,9 @@ func (this *PoolFixture) TestPutThenGet_RecyclesValueWithoutInvokingNewFunc() {
 	pool.Put(recycled)
 	value := pool.Get()
 
+	if raceDetectorEnabled && calls > 0 {
+		return // sync.Pool dropped the Put on the floor (see pool_race_test.go); recycling is unobservable on this run
+	}
 	this.So(value, should.Equal, recycled)
 	this.So(calls, should.Equal, 0)
 }

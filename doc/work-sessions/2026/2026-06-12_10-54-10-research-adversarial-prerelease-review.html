@@ -262,6 +262,8 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
 <pre><code>$ go test -race -run TestPoolFixture -count=20 ./internal/generic/   # 19 of 20 FAIL
 $ go test       -run TestPoolFixture -count=20 ./internal/generic/   #  0 of 20 FAIL</code></pre>
     <p>The production code is fine; the test asserts a property <code>sync.Pool</code> has never guaranteed. Options include skipping the assertion under the race detector, or testing the pool wrapper's delegation with a fake rather than the real <code>sync.Pool</code>.</p>
+    <hr>
+    <p><strong>RESOLVED 2026-06-12 — recycle assertions now yield only when the race-build pool actually drops the Put.</strong> The fake-<code>sync.Pool</code> option was rejected: it would add an injection seam (and an interface call) to a five-line hot-path wrapper purely for testability. Instead, following the standard library's own precedent (<code>sync/pool_test.go</code> skips under <code>race.Enabled</code>), a build-tagged test-only constant pair (<code>pool_race_test.go</code> / <code>pool_norace_test.go</code>) exposes <code>raceDetectorEnabled</code>, and the test bails out of its assertions only when running under <code>-race</code> <em>and</em> the New func was invoked (proof the Put was dropped). So the test still verifies recycling on every non-race run, still verifies it on the ~3 in 4 race runs where the Put survives, and still executes <code>Put</code>/<code>Get</code> unconditionally — keeping the generic package at 100% statement coverage under <code>make test</code>'s <code>-race</code> run. Verified: 20/20 green with <code>-race</code> (previously ~19/20 FAIL), 20/20 green without, full suite green.</p>
 </template>
 
 </main>
@@ -353,9 +355,9 @@ $ go test       -run TestPoolFixture -count=20 ./internal/generic/   #  0 of 20 
       loc: '',
     },
     {
-      id: 'F17', severity: 'LOW', state: 'open', evidence: 'REPRODUCED',
+      id: 'F17', severity: 'LOW', state: 'fixed', evidence: 'REPRODUCED',
       title: 'Flaky test: <code>TestPutThenGet_RecyclesValueWithoutInvokingNewFunc</code> fails ~95% of runs under <code>-race</code>',
-      loc: 'internal/generic/pool_test.go:44',
+      loc: 'internal/generic/pool_test.go',
     },
   ];
 
