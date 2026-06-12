@@ -51,8 +51,11 @@ func (this *execution) Listen() {
 			this.executor.Execute(instruction, func(outgoing ...any) {
 				for _, result := range outgoing {
 					message := this.newMessage()
+					message.ID = 0
+					message.Type = ""
 					message.Value = result
 					message.Content.Reset()
+					message.ContentType = ""
 					unit.results = append(unit.results, message)
 				}
 			})

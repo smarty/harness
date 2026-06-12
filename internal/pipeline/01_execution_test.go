@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/smarty/gunit/v2"
+	"github.com/smarty/gunit/v2/assert/better"
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/generic"
@@ -33,7 +34,13 @@ func (this *ExecutionFixture) getUnit() *unitOfWork {
 	return new(unitOfWork)
 }
 func (this *ExecutionFixture) getMessage() *contracts.Message {
-	return &contracts.Message{Content: bytes.NewBuffer(nil)}
+	return &contracts.Message{
+		ID:          42,
+		Type:        "stale type",
+		Value:       "stale value",
+		Content:     bytes.NewBufferString("stale content"),
+		ContentType: "stale content type",
+	}
 }
 
 func (this *ExecutionFixture) Setup() {
@@ -70,11 +77,19 @@ func (this *ExecutionFixture) TestSingleBatchProducesUnitOfWork() {
 	go this.subject.Listen()
 
 	units := this.drain()
-	this.So(len(units), should.Equal, 1)
+	this.So(len(units), better.Equal, 1)
 	this.So(this.executeCalls, should.Equal, []any{"msg-A"})
-	this.So(len(units[0].results), should.Equal, 1)
-	this.So(units[0].results[0].Value, should.Equal, "result-A")
-	this.So(len(units[0].completions), should.Equal, 1)
+
+	unit := units[0]
+	this.So(len(unit.completions), better.Equal, 1)
+	this.So(len(unit.results), better.Equal, 1)
+
+	message := unit.results[0]
+	this.So(message.ID, should.Equal, 0)
+	this.So(message.Type, should.Equal, "")
+	this.So(message.Value, should.Equal, "result-A")
+	this.So(message.Content.String(), should.Equal, "")
+	this.So(message.ContentType, should.Equal, "")
 }
 
 func (this *ExecutionFixture) TestUnitFlushesWhenMaxUnitSizeReached() {
