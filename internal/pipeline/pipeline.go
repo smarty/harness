@@ -34,26 +34,23 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 		recovery    = newRecovery(ctx, config.Recoverer, recoveryBatchSize, work4a, wait, config.Monitor)
 		entrypoint  = newEntrypoint(config.Monitor, batches, config.ShedThreshold)
 		executor    = newExecution(config.Monitor, config.ExecutionUnitSize, unitPool.Get, messagePool.Get, config.MessageTypes, batches, work1, newRouter(config.DomainTypes...))
-		serializers = newFanOut(serializationFactory(config.Monitor, config.Serializer), config.SerializerCount, config.PipelineBufferCapacity, work1, work2)
+		serializer  = newSerialization(config.Monitor, config.Serializer, work1, work2)
 		persistence = newPersistence(ctx, config.Monitor, work2, work3, config.Writer, wait)
 		completion  = newCompletion(work3, work4b)
 		broadcast   = newBroadcast(ctx, config.Monitor, work4a, work4b, work5, config.Dispatcher, wait)
 		terminal    = newTerminal(work5, unitPool.Put, messagePool.Put)
 	)
 
-	var listeners []contracts.Listener
-	listeners = append(listeners,
+	listeners := []contracts.Listener{
 		recovery,
 		entrypoint,
 		executor,
-	)
-	listeners = append(listeners, serializers...)
-	listeners = append(listeners,
+		serializer,
 		persistence,
 		completion,
 		broadcast,
 		terminal,
-	)
+	}
 	adapter := newHTTPAdapter(entrypoint)
 	result = contracts.Pipeline{
 		SheddingHTTPWrapper: adapter.HTTPHandler,
@@ -62,12 +59,6 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 		Listeners:           listeners,
 	}
 	return result, nil
-}
-
-func serializationFactory(monitor contracts.Monitor, enc contracts.Serializer) stationFactory {
-	return func(in, out chan *unitOfWork) contracts.Listener {
-		return newSerialization(monitor, enc, in, out)
-	}
 }
 
 const (

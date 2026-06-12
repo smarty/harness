@@ -43,7 +43,6 @@ func (this *ConfigFixture) TestDefaultsPopulateCapacities() {
 	this.So(cfg.BurstCapacity, should.Equal, 1024)
 	this.So(cfg.PipelineBufferCapacity, should.Equal, 4)
 	this.So(cfg.ExecutionUnitSize, should.Equal, 64)
-	this.So(cfg.SerializerCount, should.Equal, 4)
 	this.So(cfg.ShedThreshold, should.Equal, 0.80)
 	this.So(cfg.MessageTypes, should.BeNil)
 }
@@ -66,14 +65,12 @@ func (this *ConfigFixture) TestTunableOptionsOverrideDefaults() {
 		Options.BurstCapacity(2),
 		Options.PipelineBufferCapacity(2),
 		Options.ExecutionUnitSize(8),
-		Options.SerializerCount(3),
 		Options.ShedThreshold(0.5),
 		Options.MessageTypes(map[reflect.Type]string{reflect.TypeOf(""): "simple-string"}),
 	)
 	this.So(cfg.BurstCapacity, should.Equal, 2)
 	this.So(cfg.PipelineBufferCapacity, should.Equal, 2)
 	this.So(cfg.ExecutionUnitSize, should.Equal, 8)
-	this.So(cfg.SerializerCount, should.Equal, 3)
 	this.So(cfg.ShedThreshold, should.Equal, 0.5)
 	this.So(cfg.MessageTypes, should.Equal, map[reflect.Type]string{reflect.TypeOf(""): "simple-string"})
 }
@@ -85,7 +82,7 @@ func (this *ConfigFixture) TestCollaboratorOptionsOverrideDefaults() {
 }
 
 func (this *ConfigFixture) TestInvalidConfigurationYieldsErrorAndZeroPipeline() {
-	result, err := New(context.Background(), Options.SerializerCount(0))
+	result, err := New(context.Background(), Options.BurstCapacity(0))
 	this.So(errors.Is(err, contracts.ErrInvalidConfiguration), should.BeTrue)
 	this.So(result, should.Equal, contracts.Pipeline{})
 }

@@ -69,7 +69,6 @@ func (this *PoolHygieneFixture) TestRecycledMessagesCarryTheTypeOfTheirCurrentVa
 		BurstCapacity:          16,
 		PipelineBufferCapacity: 1,
 		ExecutionUnitSize:      1,
-		SerializerCount:        1,
 		ShedThreshold:          0.8,
 	})
 	this.So(err, better.BeNil)

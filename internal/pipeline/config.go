@@ -20,15 +20,10 @@ type Configuration struct {
 	BurstCapacity          int
 	PipelineBufferCapacity int
 	ExecutionUnitSize      int
-	SerializerCount        int
 	ShedThreshold          float64
 }
 
 func (this *Configuration) validate() (err error) {
-	if this.SerializerCount <= 0 {
-		err = errors.Join(err, fmt.Errorf(
-			"%w: SerializerCount must be >= 1 (got %d)", contracts.ErrInvalidConfiguration, this.SerializerCount))
-	}
 	if this.BurstCapacity <= 0 {
 		err = errors.Join(err, fmt.Errorf(
 			"%w: BurstCapacity must be >= 1 (got %d)", contracts.ErrInvalidConfiguration, this.BurstCapacity))

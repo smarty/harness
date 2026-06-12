@@ -52,7 +52,6 @@ func (this *PipelineFixture) Setup() {
 		BurstCapacity:          1024,
 		PipelineBufferCapacity: 4,
 		ExecutionUnitSize:      64,
-		SerializerCount:        4,
 		ShedThreshold:          0.8,
 	})
 	this.So(err, better.BeNil)

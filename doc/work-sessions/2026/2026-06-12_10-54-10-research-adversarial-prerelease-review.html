@@ -91,7 +91,7 @@
   <span class="stage">recovery</span><span class="arrow">→ work4a →</span>
   <span class="stage">entrypoint</span><span class="arrow">→ batches →</span>
   <span class="stage">execution</span><span class="arrow">→ work1 →</span>
-  <span class="stage">serialization ×N (fan-out/fan-in)</span><span class="arrow">→ work2 →</span>
+  <span class="stage">serialization (single station since F3 fix; was ×N fan-out/fan-in)</span><span class="arrow">→ work2 →</span>
   <span class="stage">persistence</span><span class="arrow">→ work3 →</span>
   <span class="stage">completion (ack)</span><span class="arrow">→ work4b →</span>
   <span class="stage">broadcast</span><span class="arrow">→ work5 →</span>
@@ -170,6 +170,8 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
     <p>Units of work are fanned out across 4 serialization goroutines and fanned back in nondeterministically (<code>fanIn</code> merges with a <code>WaitGroup</code> over independent range loops). Two units executed in order A, B can arrive at persistence as B, A — so database <code>id</code> order (the stream order seen by recovery and by any consumer reading the <code>Messages</code> table) does not reflect execution order whenever more than one unit is in flight.</p>
     <p>For a store-and-forward <em>event</em> pipeline this is a significant semantic: if any consumer assumes "ascending id = causal order" (a natural assumption given the auto-increment ID scheme and the ordered recovery query), the default configuration violates it under load. The integration tests assert ordering only with strictly sequential blocking calls (one unit in flight), so this is invisible to the suite.</p>
     <p>Within a single unit, message order is preserved (the serializers iterate <code>unit.results</code> in order, and persistence appends in order). The hazard is exclusively <em>between</em> units. Either the ordering contract should be documented as "per-unit only," or serializer fan-out needs an order-preserving fan-in — worth an explicit decision before tagging, since it shapes consumer expectations forever.</p>
+    <hr>
+    <p><strong>RESOLVED 2026-06-12 — fan-out removed; pipeline is now totally ordered by construction.</strong> Decision rationale: serialization is in-memory CPU work (microseconds per message), while persistence (a DB round trip per unit) and broadcast (network publish + UPDATE) are each already single serial stations — so parallel serialization could never raise throughput past those stages, and removing it converts the ordering hazard into the strongest possible contract: ascending storage <code>id</code> = execution order, always. Changes: <code>fanout.go</code> deleted (fan-out, <code>fanIn</code>, and its WaitGroup goroutines); <code>Build</code> wires a single <code>newSerialization(… work1, work2)</code> station, whose existing <code>defer close(output)</code> keeps the stage-by-stage shutdown drain intact; <code>Options.SerializerCount</code>, <code>Configuration.SerializerCount</code>, and its validation case removed from the public API (pre-tag, so not a breaking change); ordering contract documented in the <code>harness</code> package doc. If serialization ever <em>measures</em> as a bottleneck, an order-preserving fan-in can be reintroduced internally without breaking the API. Full suite green under <code>-race</code> and without, 100% statement coverage retained in root and pipeline packages.</p>
 </template>
 
 <template id="body-F4">
@@ -228,7 +230,7 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
     <table>
       <tr><th>Gap</th><th>Why it matters</th></tr>
       <tr><td>✅ Pool-reuse field hygiene end-to-end</td><td><strong>Closed 2026-06-12:</strong> <code>internal/pipeline/pool_hygiene_test.go</code> (<code>PoolHygieneFixture</code>) now sends two value types through a real <code>Build</code> pipeline and asserts the <code>Type</code> seen by the Writer; it discriminated against both buggy iterations of the F1 fix before passing. Caveat retained: the race detector suppresses pool reuse, so the test is most effective in runs without <code>-race</code>. <em>(Original gap: F1 lived here — no test sent &gt;1 value type end-to-end and asserted message fields at the Writer.)</em></td></tr>
-      <tr><td>Concurrent callers through <code>Build</code></td><td><code>pipeline_test.go</code> is strictly sequential; ordering (F3), unit coalescing under load, and fan-in interleaving are unexercised.</td></tr>
+      <tr><td>Concurrent callers through <code>Build</code></td><td><code>pipeline_test.go</code> is strictly sequential; unit coalescing under load is unexercised. <em>(Narrowed 2026-06-12: the F3 fix removed serializer fan-out/fan-in, so the ordering and interleaving portions of this gap no longer exist.)</em></td></tr>
       <tr><td>✅ Degenerate configurations</td><td><strong>Closed 2026-06-12:</strong> <code>ValidationFixture</code> (<code>internal/pipeline/config_test.go</code>) covers every degenerate edge — SerializerCount ≤ 0, BurstCapacity ≤ 0, negative PipelineBufferCapacity, ExecutionUnitSize ≤ 0, ShedThreshold out of range/NaN — plus boundary values; <code>Build</code>/<code>New</code> now reject them with <code>contracts.ErrInvalidConfiguration</code> (F2 resolved). <em>(Original gap: no test for SerializerCount 0, BurstCapacity 0, ShedThreshold 0.)</em></td></tr>
       <tr><td>sqladapter without DB</td><td>9.9% coverage in <code>-short</code> mode: a CI run without docker silently skips nearly the whole package; consider making that loud.</td></tr>
       <tr><td>Multi-writer ID contention</td><td>The stride/consecutive-ID assumption (writer.go:111-117) is documented but untested: no concurrent-connection insert test verifying assigned IDs match actual rows.</td></tr>
@@ -284,9 +286,9 @@ $ go test       -run TestPoolFixture -count=20 ./internal/generic/   #  0 of 20 
       loc: 'pipeline.go:25-74 · fanout.go:11-21 · config.go',
     },
     {
-      id: 'F3', severity: 'HIGH', state: 'open', evidence: 'BY INSPECTION',
+      id: 'F3', severity: 'HIGH', state: 'fixed', evidence: 'BY INSPECTION',
       title: 'Default <code>SerializerCount=4</code> destroys cross-unit ordering between execution and persistence',
-      loc: 'fanout.go:35-46 · pipeline.go:47',
+      loc: 'fanout.go (deleted) · pipeline.go',
     },
     {
       id: 'F4', severity: 'MEDIUM', state: 'open', evidence: 'BY INSPECTION',

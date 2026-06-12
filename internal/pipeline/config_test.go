@@ -31,7 +31,6 @@ func (this *ValidationFixture) validConfiguration() Configuration {
 		BurstCapacity:          1024,
 		PipelineBufferCapacity: 4,
 		ExecutionUnitSize:      64,
-		SerializerCount:        4,
 		ShedThreshold:          0.80,
 	}
 }
@@ -59,18 +58,6 @@ func (this *ValidationFixture) assertValid(config Configuration) {
 	}
 	this.So(pipeline.BlockingEntrypoint.(interface{ Close() error }).Close(), should.BeNil)
 	waiter.Wait()
-}
-
-func (this *ValidationFixture) TestSerializerCountZero() {
-	config := this.validConfiguration()
-	config.SerializerCount = 0
-	this.assertInvalid(config, "SerializerCount", "(got 0)")
-}
-
-func (this *ValidationFixture) TestSerializerCountNegative() {
-	config := this.validConfiguration()
-	config.SerializerCount = -1
-	this.assertInvalid(config, "SerializerCount", "(got -1)")
 }
 
 func (this *ValidationFixture) TestBurstCapacityZero() {
@@ -117,9 +104,9 @@ func (this *ValidationFixture) TestShedThresholdNaN() {
 
 func (this *ValidationFixture) TestMultipleViolationsReportedTogether() {
 	config := this.validConfiguration()
-	config.SerializerCount = 0
+	config.BurstCapacity = 0
 	config.ShedThreshold = 1.5
-	this.assertInvalid(config, "SerializerCount", "ShedThreshold")
+	this.assertInvalid(config, "BurstCapacity", "ShedThreshold")
 }
 
 func (this *ValidationFixture) TestBoundaryValuesAreValid() {
@@ -127,7 +114,6 @@ func (this *ValidationFixture) TestBoundaryValuesAreValid() {
 	config.BurstCapacity = 1
 	config.PipelineBufferCapacity = 0
 	config.ExecutionUnitSize = 1
-	config.SerializerCount = 1
 	config.ShedThreshold = 0
 	this.assertValid(config)
 }

@@ -1,6 +1,9 @@
 // Package harness provides a staged, store-and-forward message-handling
 // pipeline composed of goroutine stages (entrypoint, execution, serialization,
 // persistence, completion, broadcast, terminal) connected by buffered channels.
+// Each stage is a single goroutine, so units of work traverse the pipeline in
+// execution order: messages are persisted (and therefore assigned ascending
+// storage IDs) and dispatched in the order their units were executed.
 //
 // Callers register domain objects whose Execute.../Apply... methods drive the
 // pipeline via Options.DomainTypes(...), and supply collaborators (Writer, Dispatcher,
@@ -120,12 +123,6 @@ func (singleton) ExecutionUnitSize(value int) option {
 	return func(this *pipeline.Configuration) { this.ExecutionUnitSize = value }
 }
 
-// SerializerCount sets the number of concurrent serialization goroutines.
-// Must be >= 1 or New returns an error. Default: 4.
-func (singleton) SerializerCount(value int) option {
-	return func(this *pipeline.Configuration) { this.SerializerCount = value }
-}
-
 // ShedThreshold sets the load-shedding threshold as a fraction of BurstCapacity
 // in the range [0, 1]. When the batch channel fill ratio meets or exceeds this
 // value, new callers are refused (admission returns 503; Handle is a no-op).
@@ -148,7 +145,6 @@ func (singleton) defaults(options ...option) []option {
 		Options.BurstCapacity(1024),
 		Options.PipelineBufferCapacity(4),
 		Options.ExecutionUnitSize(64),
-		Options.SerializerCount(4),
 		Options.ShedThreshold(0.80),
 	}, options...)
 }
