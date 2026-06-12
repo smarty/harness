@@ -58,7 +58,7 @@ func (this *EntrypointFixture) TestHandlePushesBatchAndBlocksUntilCompletion() {
 	default:
 	}
 
-	item.complete()
+	item.complete(true)
 	<-done
 
 	this.So(this.tracked, should.HaveLength, 2)
@@ -74,7 +74,7 @@ func (this *EntrypointFixture) TestHandleSerializesMultipleConcurrentCalls() {
 
 	for range 3 {
 		item := <-this.work
-		item.complete()
+		item.complete(true)
 		<-done
 	}
 
@@ -109,7 +109,7 @@ func (this *EntrypointFixture) TestAwait_ReturnsAfterCompletion() {
 	default:
 	}
 
-	item.complete()
+	item.complete(true)
 	<-done
 
 	this.So(this.tracked, should.Contain, monitoring.BatchInFlight{})
@@ -142,7 +142,7 @@ func (this *EntrypointFixture) TestAwait_UnblocksOnContextCancelWhileWaiting() {
 
 	// The batch was NOT abandoned: the pipeline still owns it and will invoke
 	// complete() later. await must not have Put it back to the pool.
-	item.complete()
+	item.complete(true)
 	this.So(this.tracked, should.Contain, monitoring.BatchComplete{})
 }
 
@@ -192,7 +192,7 @@ func (this *EntrypointFixture) TestAwait_DepartedInFlightDoesNotCorruptPooledWai
 	go func() {
 		defer close(drained)
 		for item := range work {
-			item.complete()
+			item.complete(true)
 		}
 	}()
 
@@ -224,7 +224,7 @@ func (this *EntrypointFixture) TestAwait_BatchCarriesExactlyOneMessage() {
 	this.So(item.instructions, should.HaveLength, 1)
 	this.So(item.instructions[0], should.Equal, "only")
 
-	item.complete()
+	item.complete(true)
 }
 
 func (this *EntrypointFixture) TestAwait_ClosedPipelineReturnsImmediately() {
@@ -293,7 +293,7 @@ func (this *EntrypointFixture) TestHandle_BlocksUntilDurable() {
 	case <-time.After(20 * time.Millisecond):
 	}
 
-	item.complete()
+	item.complete(true)
 	<-done
 }
 
@@ -319,7 +319,7 @@ func (this *EntrypointFixture) TestHandle_DoesNotShedAtHighWatermark() {
 
 	for range 5 {
 		item := <-work
-		item.complete()
+		item.complete(true)
 	}
 	for range 5 {
 		<-done
@@ -347,7 +347,7 @@ func (this *EntrypointFixture) TestHandle_IgnoresContextCancel() {
 	case <-time.After(20 * time.Millisecond):
 	}
 
-	item.complete()
+	item.complete(true)
 	<-done
 }
 
@@ -374,7 +374,7 @@ func (this *EntrypointFixture) TestHandle_PreservesVariadicMessages() {
 	this.So(item.instructions, should.HaveLength, 3)
 	this.So(item.instructions, should.Equal, []any{"a", "b", "c"})
 
-	item.complete()
+	item.complete(true)
 }
 
 func (this *EntrypointFixture) TestCloseReleasesListenAndClosesWorkChannel() {
@@ -397,4 +397,43 @@ func (this *EntrypointFixture) TestCloseIsIdempotent() {
 	this.So(this.subject.Close(), should.BeNil)
 	this.So(this.subject.Close(), should.BeNil)
 	this.So(this.tracked, should.BeEmpty)
+}
+
+func (this *EntrypointFixture) capturePanic(action func()) (recovered any) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() { recovered = recover() }()
+		action()
+	}()
+	<-done
+	return recovered
+}
+
+func (this *EntrypointFixture) TestHandlePanicsWhenBatchAbandoned() {
+	go func() {
+		item := <-this.work
+		item.complete(false)
+	}()
+
+	recovered := this.capturePanic(func() { this.subject.Handle(this.ctx, "doomed") })
+
+	err, ok := recovered.(error)
+	this.So(ok, should.BeTrue)
+	this.So(err, should.WrapError, monitoring.ErrBatchAbandoned)
+	this.So(this.tracked, should.Contain, monitoring.BatchAbandoned{})
+}
+
+func (this *EntrypointFixture) TestAwaitPanicsWhenBatchAbandoned() {
+	go func() {
+		item := <-this.work
+		item.complete(false)
+	}()
+
+	recovered := this.capturePanic(func() { this.subject.await(this.ctx, "doomed") })
+
+	err, ok := recovered.(error)
+	this.So(ok, should.BeTrue)
+	this.So(err, should.WrapError, monitoring.ErrBatchAbandoned)
+	this.So(this.tracked, should.Contain, monitoring.BatchAbandoned{})
 }

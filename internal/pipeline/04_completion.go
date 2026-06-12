@@ -16,7 +16,7 @@ func (this *completion) Listen() {
 	defer close(this.output)
 	for unit := range this.input {
 		for _, complete := range unit.completions {
-			complete()
+			complete(true)
 		}
 		this.output <- unit
 	}

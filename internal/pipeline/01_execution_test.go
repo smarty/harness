@@ -76,7 +76,7 @@ func (this *ExecutionFixture) drain() (results []*unitOfWork) {
 
 func (this *ExecutionFixture) TestSingleBatchProducesUnitOfWork() {
 	this.executeOutputs = [][]any{{"result-A"}}
-	this.input <- &batch{instructions: []any{"msg-A"}, complete: func() {}}
+	this.input <- &batch{instructions: []any{"msg-A"}, complete: func(bool) {}}
 	close(this.input)
 
 	go this.subject.Listen()
@@ -99,9 +99,9 @@ func (this *ExecutionFixture) TestSingleBatchProducesUnitOfWork() {
 
 func (this *ExecutionFixture) TestUnitFlushesWhenMaxUnitSizeReached() {
 	this.executeOutputs = [][]any{{"r1"}, {"r2"}, {"r3"}}
-	this.input <- &batch{instructions: []any{"m1"}, complete: func() {}}
-	this.input <- &batch{instructions: []any{"m2"}, complete: func() {}}
-	this.input <- &batch{instructions: []any{"m3"}, complete: func() {}}
+	this.input <- &batch{instructions: []any{"m1"}, complete: func(bool) {}}
+	this.input <- &batch{instructions: []any{"m2"}, complete: func(bool) {}}
+	this.input <- &batch{instructions: []any{"m3"}, complete: func(bool) {}}
 	close(this.input)
 
 	this.subject = newExecution(this, 2, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this)
@@ -115,7 +115,7 @@ func (this *ExecutionFixture) TestUnitFlushesWhenMaxUnitSizeReached() {
 }
 
 func (this *ExecutionFixture) TestEmptyExecutorOutputProducesUnitWithNoResults() {
-	this.input <- &batch{instructions: []any{"silent"}, complete: func() {}}
+	this.input <- &batch{instructions: []any{"silent"}, complete: func(bool) {}}
 	close(this.input)
 
 	go this.subject.Listen()
@@ -128,7 +128,7 @@ func (this *ExecutionFixture) TestEmptyExecutorOutputProducesUnitWithNoResults()
 
 func (this *ExecutionFixture) TestExecutorBroadcastsMultipleResults() {
 	this.executeOutputs = [][]any{{"r1", "r2", "r3"}}
-	this.input <- &batch{instructions: []any{"msg"}, complete: func() {}}
+	this.input <- &batch{instructions: []any{"msg"}, complete: func(bool) {}}
 	close(this.input)
 
 	go this.subject.Listen()

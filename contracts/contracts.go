@@ -21,7 +21,13 @@ type Pipeline struct {
 	// SheddingEntrypoint is a Handler that is meant to be guarded by an admitter (such as SheddingHTTPWrapper).
 	SheddingEntrypoint Handler
 
-	// BlockingEntrypoint is a Handler that will block until the results of the provided work have been durably stored.
+	// BlockingEntrypoint is a Handler that will block until the results of the provided work
+	// have been durably stored: a normal return ALWAYS means the work was written.
+	// If the pipeline context is cancelled before the work could ever be stored, Handle
+	// panics with monitoring.ErrBatchAbandoned instead of returning — message brokers
+	// acknowledge deliveries when Handle returns, and unstored work must never be
+	// acknowledged. The panic ends the (already-shutting-down) process; the broker
+	// redelivers, preserving the at-least-once contract.
 	BlockingEntrypoint Handler
 
 	// Listeners contains each phase of the harness pipeline (serialization, persistence, broadcast, etc.).

@@ -166,3 +166,25 @@ func (this *PersistenceFixture) TestClosedInputClosesOutput() {
 	this.So(open, should.BeFalse)
 	this.So(this.tracked, should.BeEmpty)
 }
+
+func (this *PersistenceFixture) TestAbandonmentFailsCompletionsOfEveryDrainedUnit() {
+	this.writeFailCount = 1 << 30 // always fail
+	this.waitErr = context.Canceled
+	var firstOutcomes, queuedOutcomes []bool
+	this.input <- &unitOfWork{
+		results:     []*contracts.Message{{Value: "abandoned"}},
+		completions: []func(stored bool){func(stored bool) { firstOutcomes = append(firstOutcomes, stored) }},
+	}
+	this.input <- &unitOfWork{
+		results:     []*contracts.Message{{Value: "queued-behind"}},
+		completions: []func(stored bool){func(stored bool) { queuedOutcomes = append(queuedOutcomes, stored) }},
+	}
+	close(this.input)
+
+	go this.subject.Listen()
+
+	units := this.drain()
+	this.So(units, should.BeEmpty)
+	this.So(firstOutcomes, should.Equal, []bool{false})
+	this.So(queuedOutcomes, should.Equal, []bool{false})
+}

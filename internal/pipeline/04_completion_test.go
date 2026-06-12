@@ -33,9 +33,10 @@ func (this *CompletionFixture) drain() (results []*unitOfWork) {
 
 func (this *CompletionFixture) TestCallsAllCompletionsThenForwards() {
 	var invocations []string
-	this.input <- &unitOfWork{completions: []func(){
-		func() { invocations = append(invocations, "first") },
-		func() { invocations = append(invocations, "second") },
+	var outcomes []bool
+	this.input <- &unitOfWork{completions: []func(stored bool){
+		func(stored bool) { invocations = append(invocations, "first"); outcomes = append(outcomes, stored) },
+		func(stored bool) { invocations = append(invocations, "second"); outcomes = append(outcomes, stored) },
 	}}
 	close(this.input)
 
@@ -44,6 +45,7 @@ func (this *CompletionFixture) TestCallsAllCompletionsThenForwards() {
 	units := this.drain()
 	this.So(len(units), should.Equal, 1)
 	this.So(invocations, should.Equal, []string{"first", "second"})
+	this.So(outcomes, should.Equal, []bool{true, true})
 }
 
 func (this *CompletionFixture) TestNoCompletionsForwardsCleanly() {
@@ -58,8 +60,8 @@ func (this *CompletionFixture) TestNoCompletionsForwardsCleanly() {
 
 func (this *CompletionFixture) TestEachUnitFiresIndependently() {
 	var firstCalled, secondCalled int
-	this.input <- &unitOfWork{completions: []func(){func() { firstCalled++ }}}
-	this.input <- &unitOfWork{completions: []func(){func() { secondCalled++ }}}
+	this.input <- &unitOfWork{completions: []func(stored bool){func(bool) { firstCalled++ }}}
+	this.input <- &unitOfWork{completions: []func(stored bool){func(bool) { secondCalled++ }}}
 	close(this.input)
 
 	go this.subject.Listen()

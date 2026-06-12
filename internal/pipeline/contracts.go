@@ -19,10 +19,10 @@ type (
 type (
 	batch struct {
 		instructions []any
-		complete     func()
+		complete     func(stored bool)
 	}
 	unitOfWork struct {
 		results     []*contracts.Message
-		completions []func()
+		completions []func(stored bool)
 	}
 )

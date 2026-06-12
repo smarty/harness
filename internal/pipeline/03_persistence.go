@@ -40,7 +40,12 @@ func (this *persistence) Listen() {
 		stored := this.store()
 		this.buffer = this.buffer[:0]
 		if !stored {
-			continue // shutdown before durable write: do NOT forward (no ack); MQ redelivers
+			// Shutdown before durable write: do NOT forward (no ack); MQ redelivers.
+			// Failing the completions lets blocked entrypoint callers escape (by panicking).
+			for _, complete := range unit.completions {
+				complete(false)
+			}
+			continue
 		}
 		this.output <- unit
 	}

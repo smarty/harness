@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/contracts/monitoring"
@@ -32,17 +33,23 @@ func newEntrypoint(monitor contracts.Monitor, work chan *batch, shedThreshold fl
 	}
 }
 
-func (this *entrypoint) prepare(messages ...any) (waiter *sync.WaitGroup, batch *batch) {
+func (this *entrypoint) prepare(messages ...any) (waiter *sync.WaitGroup, item *batch, failed *atomic.Bool) {
 	waiter = this.waiters.Get()
 	waiter.Add(1)
-	batch = this.batches.Get()
-	batch.instructions = messages
-	batch.complete = func() {
+	item = this.batches.Get()
+	item.instructions = messages
+	failed = new(atomic.Bool)
+	item.complete = func(stored bool) {
+		if !stored {
+			failed.Store(true)
+			this.monitor.Track(batchAbandoned)
+		} else {
+			this.monitor.Track(batchComplete)
+		}
 		waiter.Done()
-		this.monitor.Track(batchComplete)
-		this.batches.Put(batch)
+		this.batches.Put(item)
 	}
-	return waiter, batch
+	return waiter, item, failed
 }
 
 func (this *entrypoint) abandon(waiter *sync.WaitGroup, item *batch) {
@@ -63,13 +70,19 @@ func (this *entrypoint) Handle(_ context.Context, messages ...any) {
 		return
 	}
 
-	waiter, item := this.prepare(messages...)
+	waiter, item, failed := this.prepare(messages...)
 	this.work <- item
 	this.lock.RUnlock()
 	this.monitor.Track(batchInFlight)
 
 	waiter.Wait()
 	this.waiters.Put(waiter)
+	if failed.Load() {
+		// The work was never durably stored and never can be (context cancelled).
+		// Returning normally would let message brokers acknowledge unstored work,
+		// so escalate: the panic kills the process and the broker redelivers.
+		panic(monitoring.ErrBatchAbandoned)
+	}
 }
 
 func (this *entrypoint) await(ctx context.Context, message any) {
@@ -79,7 +92,7 @@ func (this *entrypoint) await(ctx context.Context, message any) {
 		return
 	}
 
-	waiter, batch := this.prepare(message)
+	waiter, batch, failed := this.prepare(message)
 
 	select {
 	case this.work <- batch:
@@ -96,6 +109,11 @@ func (this *entrypoint) await(ctx context.Context, message any) {
 	select {
 	case <-this.waiterDone(waiter):
 		this.waiters.Put(waiter) // safe: detached Wait() returned before done was closed (count 0).
+		if failed.Load() {
+			// Same contract as Handle: never return normally for unstored work.
+			// HTTP stacks recover this panic into a 5xx rather than a false success.
+			panic(monitoring.ErrBatchAbandoned)
+		}
 	case <-ctx.Done():
 		this.monitor.Track(callerDeparted)
 		// Intentionally do NOT recycle the waiter here: complete() is still pending
@@ -139,6 +157,7 @@ func (this *entrypoint) Close() error {
 var (
 	batchInFlight  monitoring.BatchInFlight
 	batchComplete  monitoring.BatchComplete
+	batchAbandoned monitoring.BatchAbandoned
 	loadShed       monitoring.LoadShed
 	callerDeparted monitoring.CallerDeparted
 )

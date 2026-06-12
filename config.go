@@ -19,6 +19,17 @@
 // so consumers must cancel it on shutdown to avoid hanging the drain. Custom
 // Writer and Dispatcher implementations must honor the context they are given.
 //
+// Shutdown semantics for blocked callers: if persistence abandons a unit of
+// work (context cancelled before the Writer ever succeeded), every caller
+// blocked in BlockingEntrypoint.Handle (or awaiting via SheddingEntrypoint)
+// for that unit panics with monitoring.ErrBatchAbandoned rather than
+// returning. Returning normally would let message brokers acknowledge work
+// that was never stored. The panic deliberately ends the process — it is
+// already shutting down and can never make progress — and the broker
+// redelivers after restart. Broadcast abandonment needs no such treatment:
+// it occurs after the completion (ack) stage, and recovery redispatches
+// stored-but-undispatched messages at next startup.
+//
 // Values produced by registered domain types must serialize successfully —
 // that is the calling application's contract. If the Serializer ever returns
 // an error, the pipeline tracks a SerializationError observation and then

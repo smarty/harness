@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proposal: F4 — Abandonment Must Not Strand (or Falsely Release) Blocked Callers</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f8fa; --panel2: #eef1f4; --text: #1f2328;
+    --muted: #59636e; --accent: #0969da; --border: #d1d9e0;
+    --bad: #c62828; --warn: #e65100; --good: #2e7d32; --info: #607d8b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.6 -apple-system, "Segoe UI", Helvetica, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 32px 40px 16px; border-bottom: 1px solid var(--border); }
+  h1 { margin: 0 0 4px; font-size: 24px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  main { max-width: 1020px; margin: 0 auto; padding: 24px 40px 80px; }
+  h2 { margin-top: 40px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { margin-top: 28px; }
+  code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
+  code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; line-height: 1.45; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--panel2); }
+  .callout { border-left: 5px solid var(--accent); background: var(--panel); border-radius: 0 8px 8px 0; padding: 12px 18px; margin: 16px 0; }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.good { border-left-color: var(--good); }
+  .callout.warn { border-left-color: var(--warn); }
+  .chain { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 16px 0; font-size: 12.5px; }
+  .chain .step { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+  .chain .arrow { color: var(--muted); }
+  .chain .step.wedge { border-color: var(--bad); color: var(--bad); font-weight: 600; }
+  ul.checklist { list-style: none; padding-left: 4px; }
+  ul.checklist li { margin: 6px 0; }
+  ul.checklist li::before { content: "☐ "; color: var(--muted); }
+  ul.checklist li.done::before { content: "☑ "; color: var(--good); }
+  .loc { color: var(--muted); font-size: 12px; }
+  footer { color: var(--muted); font-size: 12px; text-align: center; padding: 24px; border-top: 1px solid var(--border); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Proposal: F4 — abandonment must not strand (or falsely release) blocked callers</h1>
+  <div class="meta">2026-06-12 · github.com/smarty/harness/v2 · follows the <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html#F4">adversarial pre-release review, finding F4</a> · evidence drawn from smarty/messaging v3.17.2 and the billing-context prototype consumer (domain-transformation-phase-9-chunk-C)</div>
+</header>
+<main>
+
+<h2>Background</h2>
+
+<p>When the pipeline context is cancelled while the Writer is failing, persistence abandons the in-flight unit and deliberately does not forward it (<code>internal/pipeline/03_persistence.go:42-44</code>). The abandoned unit's <code>completions</code> are never invoked, so every goroutine parked in <code>BlockingEntrypoint.Handle</code> (<code>waiter.Wait()</code>, <code>00_entrypoint.go:71</code>) blocks <strong>forever</strong>.</p>
+
+<h3>The non-negotiable constraint</h3>
+
+<p>The callers of <code>Handle</code> are messaging/v3 workers, and the messaging contract gives a handler <em>no way to decline acknowledgment</em>. <code>Handler.Handle(ctx, ...any)</code> returns nothing, and the streaming worker acks unconditionally the moment <code>Handle</code> returns — using the <em>hard</em> context, which is typically still alive during a soft shutdown:</p>
+
+<pre><code>// messaging/v3 streaming/worker.go:122-128
+func (this *defaultWorker) deliverBatch() bool {
+    if len(this.currentBatch) &gt; 0 {
+        this.handler.Handle(this.deliveryContext(), this.currentBatch...)
+    }
+    return this.stream.Acknowledge(this.hardContext, this.unacknowledged...) == nil
+}</code></pre>
+
+<div class="callout bad"><strong>Therefore the review's parenthetical suggestion (in <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html#F4">F4</a>) — "run completions on abandonment" — is rejected.</strong> A unit is abandoned precisely because it was never durably stored. If <code>Handle</code> returned normally, the worker would ack and the message would be lost. The invariant we must preserve: <em>a goroutine blocked in <code>Handle</code> for a non-stored unit must never return normally.</em> That leaves exactly two outcomes for those goroutines: block forever, or die.</div>
+
+<h3>Why "block forever" (the status quo) wedges real deployments</h3>
+
+<p>Verified end-to-end in the billing-context prototype (<code>main/api/application.go</code>): <code>pipeline.BlockingEntrypoint</code> is handed to <code>streaming.SubscriptionOptions.AddWorkers(...)</code>, and dominoes closes the message consumer <em>before</em> the pipeline listeners. The wedge chain on a SIGTERM-while-DB-is-down:</p>
+
+<div class="chain">
+  <span class="step">edgerunner cancels ctx + dominoes cascade begins</span><span class="arrow">→</span>
+  <span class="step">persistence abandons unit (no completion)</span><span class="arrow">→</span>
+  <span class="step wedge">worker stuck in Handle</span><span class="arrow">→</span>
+  <span class="step">subscriber.shutdown blocks on <code>&lt;-workersDone</code> even after hardShutdown (subscriber.go:91-93)</span><span class="arrow">→</span>
+  <span class="step">manager.Listen's WaitGroup never returns</span><span class="arrow">→</span>
+  <span class="step wedge">dominoes never reaches pipeline Close — process wedged until external SIGKILL</span>
+</div>
+
+<p>The messaging library's hard-shutdown escape hatch cannot help: a worker blocked inside <code>handler.Handle</code> never observes the hard context, and <code>defaultSubscriber.shutdown</code> waits unconditionally on <code>workersDone</code> after firing it.</p>
+
+<h2>Approach: fail loudly — panic the stranded callers</h2>
+
+<p>Make abandonment a first-class, observable outcome that propagates back to blocked callers as a <strong>panic</strong>. The panic guarantees the messaging worker never reaches its ack (its goroutine dies, taking the process with it — streaming has no <code>recover</code>), and it converts today's silent permanent hang into an immediate, explained crash at a moment when the process is already shutting down and can never make progress. The broker redelivers; at-least-once is preserved. This is consistent with the module's existing, documented serialization-panic policy.</p>
+
+<h3>Design</h3>
+
+<ol>
+  <li><strong>Completion callbacks carry the outcome.</strong> In <code>internal/pipeline/contracts.go</code>, change:
+<pre><code>batch struct {
+    instructions []any
+    complete     func(stored bool)   // was func()
+}
+unitOfWork struct {
+    results     []*contracts.Message
+    completions []func(stored bool)  // was []func()
+}</code></pre>
+  The completion stage (<code>04_completion.go</code>) invokes <code>complete(true)</code>; it runs strictly after persistence forwards, so <code>true</code> always means "durably stored." (Broadcast abandonment needs no handling — it occurs <em>after</em> the ack stage, and recovery redispatches.)</li>
+
+  <li><strong>Persistence invokes completions with <code>false</code> on abandonment.</strong> In <code>03_persistence.go:42-44</code>, before <code>continue</code>:
+<pre><code>if !stored {
+    for _, complete := range unit.completions {
+        complete(false)
+    }
+    continue // not forwarded: no ack, no broadcast; MQ redelivers
+}</code></pre>
+  Once the context is cancelled, every subsequent queued unit takes the same path after a single failed <code>Write</code> attempt, so the input channel still drains and the stage-by-stage shutdown chain stays intact. The abandoned unit's pooled messages are deliberately <em>not</em> recycled (terminal never sees them) — the process is about to die; see trade-offs.</li>
+
+  <li><strong>The entrypoint propagates failure to its parked callers.</strong> <code>prepare()</code> threads a shared <code>failed</code> flag into the <code>complete</code> closure and now also returns it:
+<pre><code>func (this *entrypoint) prepare(messages ...any) (waiter *sync.WaitGroup, item *batch, failed *atomic.Bool)</code></pre>
+  Inside the closure, on <code>!stored</code> the flag is set and <code>monitoring.BatchAbandoned{}</code> tracked <em>before</em> <code>waiter.Done()</code>. <em>(Revised during implementation: originally a plain <code>*bool</code> relying on the <code>Done → Wait</code> happens-before edge — correct, but it read as a race to humans; <code>atomic.Bool</code> makes the safety locally self-evident.)</em> After <code>waiter.Wait()</code> returns, <code>Handle</code> panics with <code>monitoring.ErrBatchAbandoned</code> if the flag is set; <code>await</code> does the same, but only in its <code>waiterDone</code> branch — the two caller-departed branches remain byte-for-byte unchanged (they are protected by the 16k-iteration WaitGroup-misuse regression test). <code>complete(false)</code> still recycles the batch; the waiter need not be recycled before the panic (the process is dying — a one-line comment beats the pooled object).</li>
+
+  <li><strong>New sentinel + observation.</strong> In <code>contracts/monitoring</code>:
+<pre><code>BatchAbandoned struct{}                  // tracked once per abandoned batch, before the panic
+ErrBatchAbandoned = errors.New(
+    "harness: batch abandoned before durable write; " +
+    "panicking so the message broker never acknowledges and will redeliver")</code></pre>
+  The panic value is <code>ErrBatchAbandoned</code> so any recovering layer can identify it with <code>errors.Is</code>.</li>
+
+  <li><strong>Documentation.</strong> <code>contracts.Pipeline.BlockingEntrypoint</code> doc gains: returns ⇒ durably stored; panics on shutdown-abandonment (and why). Package doc gains a shutdown-semantics paragraph. The review doc's <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html#F4">F4</a> entry is updated to <code>fixed</code> with a verification note, and <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html#F6">F6</a> gains a note that stranded-caller wedges no longer hold <code>RLock</code> forever.</li>
+</ol>
+
+<h3>Why panic is correct for each real caller (billing-context evidence)</h3>
+
+<table>
+  <tr><th>Caller</th><th>Wiring</th><th>Effect of the panic</th></tr>
+  <tr><td>MQ worker (streaming)</td><td><code>AddWorkers(pipeline.BlockingEntrypoint)</code>; no <code>recover</code> in worker.go</td><td>Process dies before <em>any</em> ack is sent for the batch (or anything else in flight). Broker redelivers after restart — exactly the at-least-once contract. Shutdown un-wedges, violently but honestly.</td></tr>
+  <tr><td>Cron job</td><td><code>application.Handle(ctx, ...)</code> from a robfig/cron goroutine, no recover chain</td><td>Process dies; the cron message is regenerated on the next tick after restart. Acceptable — the process was shutting down with a dead DB.</td></tr>
+  <tr><td>HTTP (<code>SheddingEntrypoint</code> → <code>await</code>)</td><td>billing uses <code>httpserver.Options.HandlePanic(true)</code>; bare <code>net/http</code> recovers per-connection regardless</td><td>Caller gets a 500 / dropped connection — never a false 200 for unsaved work. (HTTP callers whose own request context dies first still self-rescue via the existing <code>ctx.Done()</code> branch, unchanged.)</td></tr>
+</table>
+
+<h2>Trade-offs and open questions</h2>
+
+<ul>
+  <li><strong>A library that panics.</strong> Deliberate and narrow: only when the durability contract is unsatisfiable (context cancelled + write never succeeded) — a state from which the process can never recover anyway. The alternative (block forever + "hosts must hard-kill" documentation) leaves the dominoes wedge in place for every host that waits on its workers, and makes <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html#F6">F6</a>'s <code>Close()</code> deadlock permanent. The module already has a documented serialization-panic policy; this extends the same philosophy.</li>
+  <li><strong>One panic kills all in-flight batches.</strong> Correct, not collateral: none of them were acked, all get redelivered.</li>
+  <li><strong>Abandoned units leak pooled objects.</strong> Messages/waiters of abandoned batches are not recycled. Irrelevant — the first panic ends the process. Not worth code to "fix."</li>
+  <li><strong>Duplicate deliveries increase.</strong> Inherent to at-least-once; consumers are already required to be idempotent (publish-then-mark dispatch has the same property).</li>
+  <li><strong>Decided — <code>await</code> panics too</strong> (reviewer decision, 2026-06-12): uniformity with <code>Handle</code>, no false 200 for unsaved work, and both real HTTP stacks recover the panic (httpserver's <code>HandlePanic(true)</code>, or net/http's per-connection recovery).</li>
+  <li><strong>Not addressed here:</strong> <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html#F6">F6</a>'s full-channel <code>Close()</code> deadlock (narrowed but not eliminated), <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html#F5">F5</a> recovery-stall coupling. Separate findings, separate proposals.</li>
+</ul>
+
+<h2>Implementation checklist</h2>
+
+<h3>Phase 1 — completion-outcome plumbing (mechanical refactor, suite stays green)</h3>
+<ul class="checklist">
+  <li class="done">Change <code>batch.complete</code> and <code>unitOfWork.completions</code> to <code>func(stored bool)</code> in <code>internal/pipeline/contracts.go</code>.</li>
+  <li class="done">Update all call/append sites to compile: <code>04_completion.go</code> (<code>complete(true)</code>), <code>01_execution.go</code> (append unchanged), <code>00_entrypoint.go</code> (<code>complete</code> closure takes and ignores the bool for now), and any test fakes.</li>
+  <li class="done">Run <code>make test</code> (pipe through <code>tail -50</code>) — all green, no behavior change yet. <em>Deviation discovered en route: a pre-existing hang (NOT caused by this work) — <code>Build</code> constructed three separate entrypoint instances, so <code>Close()</code> on <code>BlockingEntrypoint</code> never released the listener instance and every drain-after-Close test hung. Fixed in pipeline.go by sharing one instance across adapter, BlockingEntrypoint, and Listeners.</em></li>
+</ul>
+
+<h3>Phase 2 — monitoring sentinel and observation</h3>
+<ul class="checklist">
+  <li class="done"><span style="color:var(--bad)">RED:</span> add a test in <code>contracts/monitoring</code> usage (or extend an existing entrypoint test fixture) asserting <code>monitoring.BatchAbandoned</code> and <code>monitoring.ErrBatchAbandoned</code> exist with the documented message — compile failure is the expected red.</li>
+  <li class="done"><span style="color:var(--good)">GREEN:</span> add <code>BatchAbandoned</code> observation and <code>ErrBatchAbandoned</code> sentinel to <code>contracts/monitoring/monitoring.go</code>.</li>
+</ul>
+
+<h3>Phase 3 — persistence fails completions on abandonment</h3>
+<ul class="checklist">
+  <li class="done"><span style="color:var(--bad)">RED:</span> in <code>03_persistence_test.go</code>: failing Writer + cancelled context → each completion in the unit is invoked exactly once with <code>stored=false</code>, and the unit is <em>not</em> forwarded to output. Also assert a unit queued <em>behind</em> the abandoned one is likewise failed (channel drains).</li>
+  <li class="done"><span style="color:var(--good)">GREEN:</span> implement the <code>complete(false)</code> loop in <code>persistence.Listen</code>.</li>
+  <li class="done">Confirm the existing "do not forward on abandonment" test still passes.</li>
+</ul>
+
+<h3>Phase 4 — entrypoint failure propagation</h3>
+<ul class="checklist">
+  <li class="done"><span style="color:var(--bad)">RED:</span> entrypoint tests: a <code>Handle</code> goroutine whose batch completes with <code>stored=false</code> panics with a value satisfying <code>errors.Is(v, monitoring.ErrBatchAbandoned)</code> (capture via <code>recover</code> in the test goroutine); completed with <code>stored=true</code> returns normally; <code>BatchAbandoned</code> tracked before the panic.</li>
+  <li class="done"><span style="color:var(--bad)">RED:</span> <code>await</code> tests: same failure → same panic; both caller-departed paths unchanged.</li>
+  <li class="done"><span style="color:var(--good)">GREEN:</span> implement failure propagation in <code>00_entrypoint.go</code> per design item 3.</li>
+  <li class="done">Confirm the 16k-iteration departed-caller stress test still passes under <code>-race</code>.</li>
+  <li class="done">Run <code>go test ./internal/pipeline/... | tail -50</code> — green, with and without <code>-race</code>.</li>
+</ul>
+
+<h3>Phase 5 — end-to-end regression test through Build</h3>
+<ul class="checklist">
+  <li class="done"><span style="color:var(--bad)">RED:</span> new test in <code>internal/pipeline</code> (alongside <code>pool_hygiene_test.go</code>): real <code>Build</code> pipeline, Writer that always errors, instant-return Waiter fake; goroutine blocked in <code>BlockingEntrypoint.Handle</code>; cancel the context; assert the goroutine panics with <code>ErrBatchAbandoned</code> (capture via <code>recover</code> in the test goroutine) and the Dispatcher never saw the unit. <em>(Implemented as <code>abandonment_test.go</code>; the real backoff <code>wait</code> sufficed — it returns promptly once the context is cancelled — so no Waiter fake was needed.)</em></li>
+  <li class="done"><span style="color:var(--good)">GREEN:</span> passed with Phases 1–4 in place, verified ×5 with and without <code>-race</code>.</li>
+  <li class="done">Full <code>make test | tail -50</code> green; 100% statement coverage retained in root + pipeline packages.</li>
+</ul>
+
+<h3>Phase 6 — documentation and bookkeeping</h3>
+<ul class="checklist">
+  <li class="done">Update <code>contracts.Pipeline.BlockingEntrypoint</code> doc comment: "returns ⇒ durably stored; panics with <code>monitoring.ErrBatchAbandoned</code> if the pipeline context is cancelled before the work could be stored, so message brokers never acknowledge unstored work."</li>
+  <li class="done">Add shutdown-semantics paragraph to the <code>harness</code> package doc.</li>
+  <li class="done">Update review doc: <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html#F4">F4</a> → <code>fixed</code> with verification note; add narrowing note to <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html#F6">F6</a>; <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html#F14">F14</a> table row added for the new end-to-end shutdown-abandonment coverage.</li>
+</ul>
+
+</main>
+<footer>Proposal · smarty/harness v2 · F4 · 2026-06-12 · no code written yet — awaiting review</footer>
+</body>
+</html>

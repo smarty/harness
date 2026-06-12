@@ -6,6 +6,7 @@ import "errors"
 type (
 	BatchInFlight      struct{}
 	BatchComplete      struct{}
+	BatchAbandoned     struct{}
 	LoadShed           struct{}
 	CallerDeparted     struct{}
 	SerializationError struct {
@@ -29,6 +30,12 @@ type (
 )
 
 var (
+	// ErrBatchAbandoned is the panic value raised by a blocked entrypoint caller
+	// whose work was abandoned (context cancelled before a durable write); the
+	// panic guarantees message brokers never acknowledge unstored work.
+	ErrBatchAbandoned = errors.New("harness: batch abandoned before durable write; " +
+		"panicking so the message broker never acknowledges and will redeliver")
+
 	ErrSerialization = errors.New("harness: serialization error")
 	ErrPersistence   = errors.New("harness: persistence error")
 	ErrBroadcast     = errors.New("harness: broadcast error")
