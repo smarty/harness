@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"reflect"
 	"testing"
 	"time"
 
@@ -55,7 +54,7 @@ func (this *WriterFixture) Setup() {
 	this.legacyWriteCalls = nil
 	this.legacyWritePanic = nil
 	this.testStride = 7
-	this.subject = NewWriter(handle, testTypeNames(), this.testStride, this.fakeLegacyWrite)
+	this.subject = NewWriter(handle, this.testStride, this.fakeLegacyWrite)
 	this.truncateTables()
 }
 
@@ -85,17 +84,6 @@ func (this *WriterFixture) TestWrite_InsertsMessageRowAndInvokesLegacyWrite() {
 	this.So(err, should.BeNil)
 	this.So(this.countMessages(), should.Equal, 1)
 	this.So(this.legacyWriteCalls, should.Equal, [][]any{{event}})
-	this.So(message.Type, should.Equal, "order-received")
-}
-
-func (this *WriterFixture) TestWrite_ResolvesMessageTypeFromRegistry() {
-	event := orderApproved{AccountID: 1, OrderID: 2, Timestamp: time.Now().UTC()}
-	message := serializedMessage(event, "")
-
-	err := this.subject.Write(this.ctx, message)
-
-	this.So(err, should.BeNil)
-	this.So(this.firstMessageType(), should.Equal, "order-approved")
 }
 
 func (this *WriterFixture) TestWrite_LegacyWritePanic_RollsBackInsertedMessage() {
@@ -159,7 +147,7 @@ type AssignIDsFixture struct {
 }
 
 func (this *AssignIDsFixture) writer(stride uint64) *Writer {
-	return NewWriter(nil, nil, stride, nil)
+	return NewWriter(nil, stride, nil)
 }
 func (this *AssignIDsFixture) messages(count int) (results []*contracts.Message) {
 	for range count {
@@ -240,13 +228,6 @@ func (this *WriterFixture) firstMessageType() string {
 	err := this.handle.QueryRow(`SELECT type FROM Messages ORDER BY id LIMIT 1`).Scan(&t)
 	this.So(err, should.BeNil)
 	return t
-}
-
-func testTypeNames() map[reflect.Type]string {
-	return map[reflect.Type]string{
-		reflect.TypeOf(orderReceived{}): "order-received",
-		reflect.TypeOf(orderApproved{}): "order-approved",
-	}
 }
 
 func serializedMessage(value any, typeOverride string) *contracts.Message {

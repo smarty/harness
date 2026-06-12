@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"reflect"
 
 	"github.com/smarty/harness/v2/contracts"
 )
@@ -17,7 +16,6 @@ type legacyWrite func(context.Context, *sql.Tx, ...any)
 
 type Writer struct {
 	handle       *sql.DB
-	typeNames    map[reflect.Type]string
 	stride       uint64
 	legacyWrite  legacyWrite
 	legacyValues []any
@@ -31,10 +29,9 @@ type Writer struct {
 // Deprecation warning: the legacyWrite escape hatch is retained for migration from
 // other projects and will be removed in a later release; new callers
 // should supply a no-op function.
-func NewWriter(handle *sql.DB, typeNames map[reflect.Type]string, stride uint64, legacyWrite legacyWrite) *Writer {
+func NewWriter(handle *sql.DB, stride uint64, legacyWrite legacyWrite) *Writer {
 	return &Writer{
 		handle:       handle,
-		typeNames:    typeNames,
 		stride:       cmp.Or(stride, 1),
 		legacyWrite:  legacyWrite,
 		legacyValues: make([]any, 0, 256),
@@ -81,9 +78,6 @@ func (this *Writer) insertMessages(ctx context.Context, tx *sql.Tx, messages []*
 	this.statement.Reset()
 	this.statement.WriteString(`INSERT INTO Messages (type, payload) VALUES `)
 	for i, message := range messages {
-		if message.Type == "" {
-			message.Type = this.typeNames[reflect.TypeOf(message.Value)]
-		}
 		if i > 0 {
 			this.statement.WriteString(`,`)
 		}
