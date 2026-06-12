@@ -3,28 +3,16 @@ package pipeline
 import (
 	"bytes"
 	"context"
-	"reflect"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/generic"
 )
 
-type Configuration struct {
-	Monitor                contracts.Monitor
-	Recoverer              contracts.Recoverer
-	Serializer             contracts.Serializer
-	Writer                 contracts.Writer
-	Dispatcher             contracts.Dispatcher
-	MessageTypes           map[reflect.Type]string
-	DomainTypes            []any
-	BurstCapacity          int
-	PipelineBufferCapacity int
-	ExecutionUnitSize      int
-	SerializerCount        int
-	ShedThreshold          float64
-}
-
-func Build(ctx context.Context, config Configuration) (result contracts.Pipeline) {
+func Build(ctx context.Context, config Configuration) (result contracts.Pipeline, err error) {
+	err = config.validate()
+	if err != nil {
+		return result, err
+	}
 	var (
 		batches = make(chan *batch, config.BurstCapacity)
 		work1   = make(chan *unitOfWork, config.PipelineBufferCapacity)
@@ -67,12 +55,13 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 		terminal,
 	)
 	adapter := newHTTPAdapter(entrypoint)
-	return contracts.Pipeline{
+	result = contracts.Pipeline{
 		SheddingHTTPWrapper: adapter.HTTPHandler,
 		SheddingEntrypoint:  adapter,
 		BlockingEntrypoint:  entrypoint,
 		Listeners:           listeners,
 	}
+	return result, nil
 }
 
 func serializationFactory(monitor contracts.Monitor, enc contracts.Serializer) stationFactory {

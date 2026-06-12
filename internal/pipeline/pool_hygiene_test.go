@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/smarty/gunit/v2"
+	"github.com/smarty/gunit/v2/assert/better"
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/contracts"
 )
@@ -54,7 +55,7 @@ func (this *PoolHygieneFixture) TestRecycledMessagesCarryTheTypeOfTheirCurrentVa
 	ctx, cancel := context.WithCancel(this.Context())
 	defer cancel()
 
-	subject := Build(ctx, Configuration{
+	subject, err := Build(ctx, Configuration{
 		Monitor:    this,
 		Recoverer:  this,
 		Serializer: this,
@@ -71,6 +72,8 @@ func (this *PoolHygieneFixture) TestRecycledMessagesCarryTheTypeOfTheirCurrentVa
 		SerializerCount:        1,
 		ShedThreshold:          0.8,
 	})
+	this.So(err, better.BeNil)
+
 	var waiter sync.WaitGroup
 	for _, listener := range subject.Listeners {
 		waiter.Go(listener.Listen)

@@ -3,10 +3,15 @@ package contracts
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"time"
 )
+
+// ErrInvalidConfiguration wraps every configuration-validation failure
+// reported by New; test with errors.Is.
+var ErrInvalidConfiguration = errors.New("harness: invalid configuration")
 
 type Pipeline struct {
 	// SheddingHTTPWrapper is meant to wrap around any http.Handler that calls SheddingEntrypoint.

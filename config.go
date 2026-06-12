@@ -41,7 +41,12 @@ import (
 // corresponding Options.* functions. Collaborators default to a shared
 // no-op implementation, so omitting them produces a runnable but inert
 // pipeline — useful for tests, but not for production.
-func New(ctx context.Context, options ...option) contracts.Pipeline {
+//
+// Exactly one of the returned values is non-nil (the zero Pipeline counting as
+// nil): a non-nil error means the configuration is invalid (it wraps
+// contracts.ErrInvalidConfiguration and names every offending value) and the
+// application should not proceed.
+func New(ctx context.Context, options ...option) (contracts.Pipeline, error) {
 	var cfg pipeline.Configuration
 	for _, apply := range Options.defaults(options...) {
 		apply(&cfg)
@@ -95,27 +100,28 @@ func (singleton) Dispatcher(value contracts.Dispatcher) option {
 
 // BurstCapacity sets the buffer size of the channel between the entrypoint and
 // execution stages. Larger values absorb more burst traffic before back-pressure
-// reaches callers. Default: 1024.
+// reaches callers. Must be >= 1 or New returns an error. Default: 1024.
 func (singleton) BurstCapacity(value int) option {
 	return func(this *pipeline.Configuration) { this.BurstCapacity = value }
 }
 
 // PipelineBufferCapacity sets the buffer size of the channels connecting all pipeline
 // stages after execution (serialization → persistence → completion → broadcast →
-// terminal). Default: 4.
+// terminal). Must be >= 0 (0 means unbuffered) or New returns an error. Default: 4.
 func (singleton) PipelineBufferCapacity(value int) option {
 	return func(this *pipeline.Configuration) { this.PipelineBufferCapacity = value }
 }
 
 // ExecutionUnitSize sets the maximum number of batches coalesced into a single unit of
 // work before the execution stage flushes downstream. Higher values increase
-// throughput at the cost of latency per batch. Default: 64.
+// throughput at the cost of latency per batch. Must be >= 1 or New returns an
+// error. Default: 64.
 func (singleton) ExecutionUnitSize(value int) option {
 	return func(this *pipeline.Configuration) { this.ExecutionUnitSize = value }
 }
 
 // SerializerCount sets the number of concurrent serialization goroutines.
-// Default: 4.
+// Must be >= 1 or New returns an error. Default: 4.
 func (singleton) SerializerCount(value int) option {
 	return func(this *pipeline.Configuration) { this.SerializerCount = value }
 }
@@ -124,6 +130,8 @@ func (singleton) SerializerCount(value int) option {
 // in the range [0, 1]. When the batch channel fill ratio meets or exceeds this
 // value, new callers are refused (admission returns 503; Handle is a no-op).
 // This option only affects HTTP callers.
+// Values outside [0, 1] cause New to return an error. A value of 0 sheds all
+// HTTP traffic — useful as a maintenance drain, but rarely what you want.
 // Default: 0.80.
 func (singleton) ShedThreshold(value float64) option {
 	return func(this *pipeline.Configuration) { this.ShedThreshold = value }

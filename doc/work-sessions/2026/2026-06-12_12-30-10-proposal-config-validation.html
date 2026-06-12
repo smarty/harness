@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proposal: Configuration Validation (F2) — smarty/harness v2</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f8fa; --panel2: #eef1f4; --text: #1f2328;
+    --muted: #59636e; --accent: #0969da; --border: #d1d9e0;
+    --good: #2e7d32; --warn: #b8860b; --bad: #c62828;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.6 -apple-system, "Segoe UI", Helvetica, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 32px 40px 16px; border-bottom: 1px solid var(--border); }
+  h1 { margin: 0 0 4px; font-size: 26px; }
+  h1 small { color: var(--muted); font-weight: normal; font-size: 15px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 40px 80px; }
+  h2 { margin-top: 40px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { margin-top: 28px; }
+  code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
+  code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; line-height: 1.45; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--panel2); }
+  .callout { border: 1px solid var(--border); border-left: 5px solid var(--accent); border-radius: 8px; background: var(--panel); padding: 12px 18px; margin: 16px 0; }
+  .callout.turn { border-left-color: var(--good); }
+  .callout.warn { border-left-color: var(--warn); }
+  ul.checklist { list-style: none; padding-left: 0; }
+  ul.checklist li { margin: 6px 0; padding-left: 28px; position: relative; }
+  ul.checklist li::before { content: "☐"; position: absolute; left: 4px; color: var(--muted); }
+  ul.checklist li.done::before { content: "☑"; color: var(--good); }
+  .phase { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 4px 18px 12px; margin: 16px 0; }
+  .tag { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 10px; color: #fff; letter-spacing: .4px; }
+  .red { background: var(--bad); } .green { background: var(--good); } .refactor { background: var(--accent); }
+  a { color: var(--accent); }
+  footer { color: var(--muted); font-size: 12px; text-align: center; padding: 24px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Proposal: Configuration Validation <small>— resolves F2 of the adversarial pre-release review</small></h1>
+  <div class="meta">2026-06-12 (rev 2: error return instead of panic) · github.com/smarty/harness/v2 · research:
+    <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html">adversarial pre-release review</a> (F2, HIGH)</div>
+</header>
+<main>
+
+<h2>Background</h2>
+<p>The review found (F2, HIGH) that neither <code>harness.New</code> nor <code>pipeline.Build</code> validates any
+configuration value. The worst case is silent and total: <code>Options.SerializerCount(0)</code> builds a pipeline whose
+fan-in closes <code>work2</code> immediately — downstream stages exit cleanly while the execution stage blocks forever on
+its first send to the never-consumed <code>work1</code>, and every <code>BlockingEntrypoint.Handle</code> caller hangs for
+the life of the process with no observation emitted. The full set of un-validated edges:</p>
+<table>
+  <tr><th>Input</th><th>Today's effect</th></tr>
+  <tr><td><code>SerializerCount(0)</code> (or negative)</td><td>Deadlocked pipeline; callers hang forever, silently</td></tr>
+  <tr><td><code>BurstCapacity(0)</code></td><td><code>admit()</code> computes <code>0/0 = NaN</code>; shedding never fires; every send rendezvouses unbuffered</td></tr>
+  <tr><td>Negative capacities</td><td><code>make(chan, n)</code> panics deep inside <code>Build</code> with an unhelpful runtime message</td></tr>
+  <tr><td><code>ExecutionUnitSize(0)</code> (or negative)</td><td>Coalescing silently degrades to unit-per-batch</td></tr>
+  <tr><td><code>ShedThreshold</code> outside [0, 1], or NaN</td><td>Undefined shedding behavior (e.g. <code>NaN</code> never sheds; <code>&gt;1</code> never sheds; negative sheds everything)</td></tr>
+</table>
+<p>This is a foundational library about to be consumed by other teams; a configuration that can never move a message
+must fail at construction, not cost a consumer an afternoon under load.</p>
+
+<h2>Approach</h2>
+<p><strong>Fail fast with an error: <code>New</code> (and <code>pipeline.Build</code>) return
+<code>(contracts.Pipeline, error)</code>. Exactly one of the two is non-nil.</strong> Construction happens at application
+startup, so the application detects the non-nil error and exits gracefully — log it, return non-zero, done. No partially
+constructed pipeline ever escapes: on any violation, <code>Build</code> returns the zero <code>contracts.Pipeline</code>
+and the error <em>before</em> any channel, pool, or goroutine plumbing is created.</p>
+<pre><code>// new signatures
+func New(ctx context.Context, options ...option) (contracts.Pipeline, error)        // root package
+func Build(ctx context.Context, config Configuration) (contracts.Pipeline, error)   // internal/pipeline</code></pre>
+<p>This is a breaking change to the v2 signature, made deliberately <em>now</em> — the module is unreleased (the whole
+point of this review cycle), and the only in-repo caller is <code>config_test.go:89</code>. An error return beats the
+alternatives:</p>
+<ul>
+  <li><strong>vs. panic:</strong> an error lets the host application shut down on its own terms (flush logs, release
+      resources, exit with a chosen status code) instead of unwinding through a stack trace. Idiomatic for constructors
+      that take user-supplied configuration.</li>
+  <li><strong>vs. silently clamping to defaults:</strong> hides the caller's mistake. A consumer who writes
+      <code>SerializerCount(0)</code> meant <em>something</em>; running with a value they didn't choose is the same
+      class of surprise we're trying to eliminate, just less severe.</li>
+</ul>
+
+<h3>Validation rules</h3>
+<table>
+  <tr><th>Field</th><th>Valid range</th><th>Note</th></tr>
+  <tr><td><code>BurstCapacity</code></td><td>≥ 1</td><td>0 breaks shedding math (NaN) and the documented buffering contract</td></tr>
+  <tr><td><code>PipelineBufferCapacity</code></td><td>≥ 0</td><td>0 (unbuffered) is legal and meaningful; only negatives rejected</td></tr>
+  <tr><td><code>ExecutionUnitSize</code></td><td>≥ 1</td><td>0 has no coherent meaning (coalesce nothing?)</td></tr>
+  <tr><td><code>SerializerCount</code></td><td>≥ 1</td><td>0 is the deadlock; negatives panic later anyway</td></tr>
+  <tr><td><code>ShedThreshold</code></td><td>0 ≤ v ≤ 1, not NaN</td><td>0 remains <em>valid</em> (shed all HTTP traffic — useful for maintenance drain) but gets a doc-comment warning on the option; see below</td></tr>
+</table>
+
+<h3>Where the check lives</h3>
+<p>A <code>config.validate() error</code> method on <code>pipeline.Configuration</code>, called as the first statement of
+<code>pipeline.Build</code>. Placing it in the internal package (rather than in <code>harness.New</code>) means any
+future internal caller of <code>Build</code> is covered too, and the rule sits next to the struct it governs.
+<code>harness.New</code> simply propagates:</p>
+<pre><code>// config.go (root)
+func New(ctx context.Context, options ...option) (contracts.Pipeline, error) {
+    var cfg pipeline.Configuration
+    for _, apply := range Options.defaults(options...) {
+        apply(&amp;cfg)
+    }
+    return pipeline.Build(ctx, cfg)
+}
+
+// internal/pipeline/pipeline.go
+func Build(ctx context.Context, config Configuration) (contracts.Pipeline, error) {
+    if err := config.validate(); err != nil {
+        return contracts.Pipeline{}, err
+    }
+    ...
+}</code></pre>
+<p>The error names the offending field, the received value, and the valid range — and reports <em>all</em>
+violations at once (collected and joined via <code>errors.Join</code>), so a consumer with two bad values fixes both in
+one iteration:</p>
+<pre><code>harness: invalid configuration: SerializerCount must be >= 1 (got 0)
+harness: invalid configuration: ShedThreshold must be in [0, 1] (got 1.5)</code></pre>
+<p>A module-level sentinel <code>contracts.ErrInvalidConfiguration</code> wraps every violation, so callers can test
+<code>errors.Is(err, contracts.ErrInvalidConfiguration)</code> — consistent with the module's existing sentinel style
+(<code>ErrPersistence</code>, <code>ErrBroadcast</code>).</p>
+
+<h3>Documentation companion changes</h3>
+<ul>
+  <li><code>New</code>'s doc comment documents the contract: exactly one of (pipeline, error) is non-nil; a non-nil error means the configuration is invalid and the application should not proceed.</li>
+  <li><code>Options.ShedThreshold</code> doc comment gains: "A value of 0 sheds all HTTP traffic; values outside [0, 1] cause New to return an error."</li>
+  <li>Each tunable option's doc comment states its valid range, matching the table above.</li>
+  <li>The research document's F2 entry is flipped to <code>data-state="fixed"</code> with a verification note, and F14's "Degenerate configurations" gap is marked closed.</li>
+</ul>
+
+<h2>Trade-offs</h2>
+<ul>
+  <li><strong>Breaking signature change.</strong> Every existing call site (only <code>config_test.go:89</code> in-repo, plus any unreleased consumers) must handle the error. Doing it before the v2 tag is precisely why this review ran first; after tagging, this door closes.</li>
+  <li><strong>The error is ignorable.</strong> Unlike a panic, a careless caller can discard the error and use the zero <code>contracts.Pipeline</code> — its nil <code>BlockingEntrypoint</code> will nil-panic on first use, which is at least immediate and obvious rather than a silent deadlock. <code>go vet</code>/linters catch the unchecked error in practice.</li>
+  <li><strong><code>ShedThreshold(0)</code> stays legal.</strong> The review called it a footgun, but it has a legitimate use (drain mode) and rejecting it would conflate "suspicious" with "invalid." Documentation carries that load instead. Open to revisiting.</li>
+  <li><strong><code>PipelineBufferCapacity(0)</code> stays legal.</strong> Unbuffered stage channels are slow but correct. Same reasoning.</li>
+  <li><strong>No validation of collaborator nil-ness.</strong> <code>defaults()</code> already guarantees non-nil collaborators through <code>harness.New</code>; a direct <code>pipeline.Build</code> caller passing nil collaborators is an internal-package concern out of scope here (only our own tests do that, and they pass non-nil).</li>
+</ul>
+
+<h2>Implementation checklist</h2>
+
+<div class="phase">
+<h3>Phase 1 — Validation in <code>pipeline.Build</code> <span class="tag red">RED</span> → <span class="tag green">GREEN</span> <em>(Your Turn — see below)</em></h3>
+<ul class="checklist">
+  <li class="done">Add <code>contracts.ErrInvalidConfiguration</code> sentinel beside the existing <code>ErrPersistence</code>/<code>ErrBroadcast</code> <em>(placed in <code>contracts</code> proper — the monitoring sentinels live in <code>contracts/monitoring</code>, but this one is not an observation)</em></li>
+  <li class="done">Add a new test fixture <code>internal/pipeline/validation_test.go</code> (gunit style) with cases asserting <code>Build</code> returns a zero pipeline and a non-nil error — wrapping <code>contracts.ErrInvalidConfiguration</code> and naming the field with its received value — for: <code>SerializerCount(0)</code>, <code>SerializerCount(-1)</code>, <code>BurstCapacity(0)</code>, <code>BurstCapacity(-1)</code>, <code>PipelineBufferCapacity(-1)</code>, <code>ExecutionUnitSize(0)</code>, <code>ShedThreshold(-0.1)</code>, <code>ShedThreshold(1.1)</code>, <code>ShedThreshold(NaN)</code></li>
+  <li class="done">Add a multi-violation case asserting the joined error reports <em>both</em> offending fields</li>
+  <li class="done">Add passing-boundary cases asserting <code>Build</code> returns a usable pipeline and nil error for: <code>SerializerCount(1)</code>, <code>BurstCapacity(1)</code>, <code>PipelineBufferCapacity(0)</code>, <code>ExecutionUnitSize(1)</code>, <code>ShedThreshold(0)</code>, <code>ShedThreshold(1)</code></li>
+  <li class="done">Run <code>go test ./internal/pipeline/ -run TestValidation | tail -50</code> — confirm failure for the right reason (compile error: <code>Build</code> returns one value / <code>validate</code> undefined)</li>
+  <li class="done">Implement <code>Configuration.validate() error</code>; change <code>Build</code> to <code>(contracts.Pipeline, error)</code>, validating before any channel is made <em>(implemented by Mike; Configuration + validate moved to new <code>internal/pipeline/config.go</code>, tests to <code>config_test.go</code>)</em></li>
+  <li class="done">Run the fixture again — confirm all green <em>(validation fixture, full <code>make test</code>, and a fresh <code>-count=1 -race</code> run all pass; 100% coverage in root/pipeline)</em></li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase 2 — Propagate through <code>harness.New</code> <span class="tag red">RED</span> → <span class="tag green">GREEN</span></h3>
+<ul class="checklist">
+  <li class="done">Add cases to <code>ConfigFixture</code> (root <code>config_test.go</code>): <code>New(ctx, Options.SerializerCount(0))</code> returns a non-nil error satisfying <code>errors.Is(err, contracts.ErrInvalidConfiguration)</code> and a zero pipeline; <code>New(ctx)</code> with defaults returns nil error</li>
+  <li class="done">Run <code>go test . -run TestConfigFixture | tail -50</code> <em>(deviation: no red run — Mike changed <code>New</code>'s signature during his turn, so these cases passed immediately)</em></li>
+  <li class="done">Change <code>New</code> to return <code>(contracts.Pipeline, error)</code>, propagating from <code>Build</code> <em>(signature by Mike)</em>; doc comment updated (exactly-one-non-nil contract)</li>
+  <li class="done">Fix the existing call sites <em>(by Mike: root <code>TestZeroOptionsPipelineRunsInertly</code>, <code>pipeline_test.go</code>, <code>pool_hygiene_test.go</code> all assert nil error)</em></li>
+  <li class="done">Run the fixture again — confirm all green</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase 3 — Documentation <span class="tag refactor">REFACTOR</span></h3>
+<ul class="checklist">
+  <li class="done">Update doc comments on <code>Options.BurstCapacity</code>, <code>PipelineBufferCapacity</code>, <code>ExecutionUnitSize</code>, <code>SerializerCount</code>, <code>ShedThreshold</code> in <code>config.go</code> to state valid ranges and that <code>New</code> returns an error on violations; note the drain-mode meaning of <code>ShedThreshold(0)</code>; also documented the exactly-one-non-nil contract on <code>New</code></li>
+  <li class="done">Run <code>make test | tail -50</code> — full suite green (F17 flake did not surface in these runs)</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase 4 — Review-document bookkeeping</h3>
+<ul class="checklist">
+  <li class="done">In the research HTML: set F2 <code>data-state="fixed"</code> and append a verification note (date, commit, how verified)</li>
+  <li class="done">In F14's gap table: mark the "Degenerate configurations" row closed, mirroring the style of the pool-hygiene row (progress line updated to 2 of 5)</li>
+</ul>
+</div>
+
+<h2 id="your-turn">Your Turn</h2>
+<div class="callout turn">
+<p><strong>Your portion: write <code>Configuration.validate() error</code> and wire it into <code>Build</code></strong> — the
+core production logic of this change (Phase 1). I'll have written the failing tests and the sentinel first, so you get a
+classic red bar to turn green. I'll handle the <code>harness.New</code> propagation and call-site fixes in Phase 2.</p>
+<p>What to build, in <code>internal/pipeline/pipeline.go</code> (or a new <code>validation.go</code> beside it, your call):</p>
+<pre><code>// suggested shape — adjust freely
+func (this Configuration) validate() (err error) {
+    // collect one error per violation, each wrapping
+    // contracts.ErrInvalidConfiguration and formatted like
+    //   "%w: SerializerCount must be >= 1 (got %d)"
+    // combine with errors.Join (returns nil when there are no violations)
+}</code></pre>
+<p>Behavior to satisfy (encoded in the tests):</p>
+<ul>
+  <li>Rules per the validation table above; each violation names the field, the constraint, and the received value, e.g. <code>SerializerCount must be &gt;= 1 (got 0)</code></li>
+  <li>All violations reported in one returned error, in struct-field order; <code>errors.Is(err, contracts.ErrInvalidConfiguration)</code> holds for every violation</li>
+  <li><code>math.IsNaN</code> for the ShedThreshold check — note <code>NaN &gt;= 0</code> and <code>NaN &lt;= 1</code> are both false, so a naive range check would accidentally work; make the NaN rejection explicit and intentional anyway</li>
+  <li>Boundary values (<code>1</code>, <code>0</code> where legal, <code>0.0</code>/<code>1.0</code>) must pass untouched — no clamping, no mutation</li>
+  <li><code>Build</code> validates first and returns <code>contracts.Pipeline{}, err</code> before any channel is made</li>
+</ul>
+<p>Run with: <code>go test ./internal/pipeline/ -run TestValidation | tail -50</code>. When green, hand back and I'll do Phases 2–4.</p>
+</div>
+
+</main>
+<footer>Proposal rev 2 · resolves F2 · awaiting review — no code written yet</footer>
+</body>
+</html>

@@ -41,7 +41,8 @@ type commandType string
 
 func (this *PipelineFixture) Setup() {
 	this.ctx = context.WithValue(this.Context(), "testing", this.Name())
-	this.pipeline = Build(this.ctx, Configuration{
+	var err error
+	this.pipeline, err = Build(this.ctx, Configuration{
 		Monitor:                this,
 		Recoverer:              this,
 		Serializer:             this,
@@ -54,6 +55,8 @@ func (this *PipelineFixture) Setup() {
 		SerializerCount:        4,
 		ShedThreshold:          0.8,
 	})
+	this.So(err, better.BeNil)
+
 	for _, listener := range this.pipeline.Listeners {
 		this.waiter.Go(listener.Listen)
 	}

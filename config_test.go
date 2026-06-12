@@ -2,12 +2,14 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"sync"
 	"testing"
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
+	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/pipeline"
 )
 
@@ -82,11 +84,23 @@ func (this *ConfigFixture) TestCollaboratorOptionsOverrideDefaults() {
 	this.So(cfg.Monitor, should.Equal, recorder)
 }
 
+func (this *ConfigFixture) TestInvalidConfigurationYieldsErrorAndZeroPipeline() {
+	result, err := New(context.Background(), Options.SerializerCount(0))
+	this.So(errors.Is(err, contracts.ErrInvalidConfiguration), should.BeTrue)
+	this.So(result, should.Equal, contracts.Pipeline{})
+}
+
+func (this *ConfigFixture) TestDefaultConfigurationYieldsNilError() {
+	_, err := New(context.Background())
+	this.So(err, should.BeNil)
+}
+
 func (this *ConfigFixture) TestZeroOptionsPipelineRunsInertly() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	inert := New(ctx)
+	inert, err := New(ctx)
+	this.So(err, should.BeNil)
 
 	done := make(chan struct{})
 	go func() {

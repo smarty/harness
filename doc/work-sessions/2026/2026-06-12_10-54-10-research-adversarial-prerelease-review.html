@@ -157,7 +157,7 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
 </details>
 
 <!-- F2 -->
-<details class="finding HIGH" data-state="open">
+<details class="finding HIGH" data-state="fixed">
   <summary><span class="badge">HIGH</span> F2 — No validation of <code>Configuration</code>: <code>SerializerCount(0)</code> silently builds a deadlocked pipeline <span class="inspect">BY INSPECTION</span><span class="loc">pipeline.go:25-74 · fanout.go:11-21 · config.go</span></summary>
   <div>
     <p>None of the option values are validated. The worst case: <code>Options.SerializerCount(0)</code> produces a fan-out with zero workers; <code>newFanIn</code> with zero inputs closes <code>work2</code> immediately, so persistence/completion/broadcast/terminal all exit cleanly — while the execution stage blocks forever on its first send to the never-consumed <code>work1</code>. Callers of <code>BlockingEntrypoint.Handle</code> then hang for the life of the process with no observation emitted. Other un-validated edges:</p>
@@ -169,6 +169,8 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
       <tr><td><code>ExecutionUnitSize(0)</code></td><td>Coalescing condition <code>len(completions) &lt; 0</code> never true — degrades to unit-per-batch (harmless but undocumented)</td></tr>
     </table>
     <p>Since this is a foundational library about to be consumed by other teams, <code>New</code>/<code>Build</code> silently accepting a configuration that can never move a message is the kind of hole that costs someone an afternoon.</p>
+    <hr>
+    <p><strong>RESOLVED 2026-06-12 (proposal: <a href="2026-06-12_12-30-10-proposal-config-validation.html">config-validation</a>).</strong> <code>harness.New</code> and <code>pipeline.Build</code> now return <code>(contracts.Pipeline, error)</code> — exactly one non-nil. A new <code>Configuration.validate()</code> (in <code>internal/pipeline/config.go</code>) rejects, before any pipeline plumbing is constructed: <code>SerializerCount &lt; 1</code>, <code>BurstCapacity &lt; 1</code>, <code>PipelineBufferCapacity &lt; 0</code>, <code>ExecutionUnitSize &lt; 1</code>, and <code>ShedThreshold</code> outside [0, 1] or NaN. All violations are reported in one error via <code>errors.Join</code>, each wrapping the new sentinel <code>contracts.ErrInvalidConfiguration</code>. <code>ShedThreshold(0)</code> and <code>PipelineBufferCapacity(0)</code> remain deliberately legal (drain mode / unbuffered), carried by doc comments on each option. Verified by the new <code>ValidationFixture</code> (<code>internal/pipeline/config_test.go</code>: every degenerate edge above, multi-violation joining, and boundary values) plus root <code>ConfigFixture</code> cases through the public <code>New</code>; full suite green under <code>-race</code>, 100% statement coverage in root and pipeline packages.</p>
   </div>
 </details>
 
@@ -276,13 +278,13 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
 <details class="finding INFO" data-state="inprogress">
   <summary><span class="badge">INFO</span> F14 — Test-coverage holes behind the 100% statement figure <span class="loc">whole module</span></summary>
   <div>
-    <p><strong>Progress 2026-06-12:</strong> 1 of 5 gaps closed (pool-reuse field hygiene — see first row below). The other four remain open; F14 stays in progress until they are addressed or consciously waived.</p>
+    <p><strong>Progress 2026-06-12:</strong> 2 of 5 gaps closed (pool-reuse field hygiene; degenerate configurations — see rows below). The other three remain open; F14 stays in progress until they are addressed or consciously waived.</p>
     <p>The suite is genuinely strong (entrypoint concurrency torture test, WaitGroup-misuse regression, retry/backoff, scanner signature filtering, DB integration for all three adapters). What it does not cover, and what F1 proves matters:</p>
     <table>
       <tr><th>Gap</th><th>Why it matters</th></tr>
       <tr><td>✅ Pool-reuse field hygiene end-to-end</td><td><strong>Closed 2026-06-12:</strong> <code>internal/pipeline/pool_hygiene_test.go</code> (<code>PoolHygieneFixture</code>) now sends two value types through a real <code>Build</code> pipeline and asserts the <code>Type</code> seen by the Writer; it discriminated against both buggy iterations of the F1 fix before passing. Caveat retained: the race detector suppresses pool reuse, so the test is most effective in runs without <code>-race</code>. <em>(Original gap: F1 lived here — no test sent &gt;1 value type end-to-end and asserted message fields at the Writer.)</em></td></tr>
       <tr><td>Concurrent callers through <code>Build</code></td><td><code>pipeline_test.go</code> is strictly sequential; ordering (F3), unit coalescing under load, and fan-in interleaving are unexercised.</td></tr>
-      <tr><td>Degenerate configurations</td><td>No test for SerializerCount 0, BurstCapacity 0, ShedThreshold 0 (F2).</td></tr>
+      <tr><td>✅ Degenerate configurations</td><td><strong>Closed 2026-06-12:</strong> <code>ValidationFixture</code> (<code>internal/pipeline/config_test.go</code>) covers every degenerate edge — SerializerCount ≤ 0, BurstCapacity ≤ 0, negative PipelineBufferCapacity, ExecutionUnitSize ≤ 0, ShedThreshold out of range/NaN — plus boundary values; <code>Build</code>/<code>New</code> now reject them with <code>contracts.ErrInvalidConfiguration</code> (F2 resolved). <em>(Original gap: no test for SerializerCount 0, BurstCapacity 0, ShedThreshold 0.)</em></td></tr>
       <tr><td>sqladapter without DB</td><td>9.9% coverage in <code>-short</code> mode: a CI run without docker silently skips nearly the whole package; consider making that loud.</td></tr>
       <tr><td>Multi-writer ID contention</td><td>The stride/consecutive-ID assumption (writer.go:111-117) is documented but untested: no concurrent-connection insert test verifying assigned IDs match actual rows.</td></tr>
     </table>
