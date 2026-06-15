@@ -14,6 +14,10 @@ import (
 // Deprecated
 type legacyWrite func(context.Context, *sql.Tx, ...any)
 
+// Writer reuses instance-level statement and argument buffers across calls and
+// is therefore not safe for concurrent use; it must be driven from a single
+// goroutine (as the pipeline does). Sharing one Writer across goroutines yields
+// interleaved SQL.
 type Writer struct {
 	handle       *sql.DB
 	stride       uint64

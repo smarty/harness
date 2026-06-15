@@ -14,6 +14,10 @@ import (
 	"github.com/smarty/harness/v2/contracts"
 )
 
+// Dispatcher reuses instance-level statement and argument buffers across calls
+// and is therefore not safe for concurrent use; it must be driven from a single
+// goroutine (as the pipeline does). Sharing one Dispatcher across goroutines
+// yields interleaved SQL.
 type Dispatcher struct {
 	inner     contracts.Dispatcher
 	handle    *sql.DB

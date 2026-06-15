@@ -210,6 +210,8 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
 
 <template id="body-F10">
     <p>Both reuse instance-level <code>statement</code>/<code>args</code> buffers across calls. The pipeline invokes each from exactly one goroutine, so this is correct <em>in situ</em> — but they are exported types in a public module with no doc comment saying "single goroutine only." A consumer who shares one Writer across two pipelines (or calls it directly) gets silently interleaved SQL. One sentence of doc (like the pipeline's own <code>router</code> comment, which does this well) closes it.</p>
+    <hr>
+    <p><strong>RESOLVED 2026-06-15 — documented.</strong> Both exported types now carry a type-level doc comment stating they reuse instance-level statement/argument buffers, are not safe for concurrent use, and must be driven from a single goroutine (as the pipeline does), with the interleaved-SQL consequence spelled out (<code>sqladapter/writer.go</code>, <code>sqladapter/dispatcher.go</code>). Build and <code>go vet</code> clean.</p>
 </template>
 
 <template id="body-F11">
@@ -326,7 +328,7 @@ $ go test       -run TestPoolFixture -count=20 ./internal/generic/   #  0 of 20 
       loc: 'scanner.go:8-48 · routing.go:35-57',
     },
     {
-      id: 'F10', severity: 'LOW', state: 'open', evidence: 'BY INSPECTION',
+      id: 'F10', severity: 'LOW', state: 'fixed', evidence: 'BY INSPECTION',
       title: 'sqladapter <code>Writer</code>/<code>Dispatcher</code> are stateful and not safe for concurrent use, undocumented',
       loc: 'sqladapter/writer.go:18-26 · sqladapter/dispatcher.go:17-22',
     },
