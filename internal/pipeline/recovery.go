@@ -8,7 +8,7 @@ import (
 	"github.com/smarty/harness/v2/contracts/monitoring"
 )
 
-type Recovery struct {
+type recovery struct {
 	ctx       context.Context
 	recoverer contracts.Recoverer
 	batchSize int
@@ -24,8 +24,8 @@ func newRecovery(
 	output chan *unitOfWork,
 	wait contracts.Waiter,
 	monitor contracts.Monitor,
-) *Recovery {
-	return &Recovery{
+) *recovery {
+	return &recovery{
 		ctx:       ctx,
 		recoverer: recoverer,
 		batchSize: batchSize,
@@ -50,7 +50,7 @@ func newRecovery(
 // Operators see RecoveryError observations while dispatching is stopped;
 // the cure is restoring the datastore (or shutdown, which abandons here
 // just like persistence/broadcast and lets the next start retry recovery).
-func (this *Recovery) Listen() {
+func (this *recovery) Listen() {
 	defer close(this.output)
 
 	total := 0
@@ -73,7 +73,7 @@ func (this *Recovery) Listen() {
 // signals recovery is complete. On shutdown it tracks RecoveryAbandoned and
 // returns (nil, false). The failure-streak counter starts fresh each call, so
 // backoff measures consecutive failures, not lifetime calls.
-func (this *Recovery) recoverPage() ([]*contracts.Message, bool) {
+func (this *recovery) recoverPage() ([]*contracts.Message, bool) {
 	for attempt := 1; ; attempt++ {
 		page, err := this.recoverer.Recover(this.ctx, this.batchSize)
 		if err == nil {
@@ -93,7 +93,7 @@ func (this *Recovery) recoverPage() ([]*contracts.Message, bool) {
 
 // forward splits a page into batchSize-bounded units, defending against a
 // Recoverer that returns more than the limit it was given.
-func (this *Recovery) forward(messages []*contracts.Message) {
+func (this *recovery) forward(messages []*contracts.Message) {
 	for len(messages) > 0 {
 		batchSize := min(this.batchSize, len(messages))
 		this.output <- &unitOfWork{results: messages[:batchSize]}

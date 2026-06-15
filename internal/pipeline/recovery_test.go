@@ -24,7 +24,7 @@ type RecoveryFixture struct {
 	waits     []time.Duration
 	waitErr   error
 	tracked   []any
-	subject   *Recovery
+	subject   *recovery
 
 	// script drives Recover: each entry is either a page ([]*contracts.Message)
 	// or an error. Recover pops the next entry per call, returning an empty page
