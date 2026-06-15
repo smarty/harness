@@ -19,10 +19,11 @@ func TestShutdownUnwedgeFixture(t *testing.T) {
 	gunit.Run(new(ShutdownUnwedgeFixture), t)
 }
 
-// ShutdownUnwedgeFixture proves F6 end-to-end through Build: when the downstream
-// is wedged (not erroring) and the work channel is full, Close() still returns
-// promptly and the callers blocked enqueuing into BlockingEntrypoint.Handle panic
-// with monitoring.ErrBatchAbandoned rather than deadlocking shutdown forever.
+// ShutdownUnwedgeFixture proves end-to-end through Build that Close() cannot
+// deadlock behind a blocked sender: when the downstream is wedged (not erroring)
+// and the work channel is full, Close() still returns promptly and the callers
+// blocked enqueuing into BlockingEntrypoint.Handle panic with
+// monitoring.ErrBatchAbandoned rather than deadlocking shutdown forever.
 //
 // The execution stage stops draining the entrypoint's work channel while a handler
 // is blocked, so with BurstCapacity=1 the effective capacity is exactly 2 (one

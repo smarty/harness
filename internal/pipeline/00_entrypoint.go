@@ -83,7 +83,7 @@ func (this *entrypoint) Handle(_ context.Context, messages ...any) {
 		case <-this.done:
 			// ...but become escapable at shutdown so Close cannot deadlock behind
 			// us. The work was never stored; releasing normally would let a broker
-			// acknowledge it, so abandon and panic per the F4 contract.
+			// acknowledge unstored work, so abandon and panic instead.
 			this.lock.RUnlock()
 			this.abandon(waiter, item)
 			this.waiters.Put(waiter)
@@ -130,8 +130,8 @@ func (this *entrypoint) await(ctx context.Context, message any) {
 			return
 		case <-this.done:
 			// Shutdown while blocked on a wedged downstream. Unlike a caller
-			// departure, the work was never stored; panic per the F4 contract so an
-			// HTTP stack returns 5xx rather than a false success.
+			// departure, the work was never stored; panic rather than acknowledge
+			// unstored work, so an HTTP stack returns 5xx rather than a false success.
 			this.lock.RUnlock()
 			this.abandon(waiter, batch)
 			this.waiters.Put(waiter) // safe: abandon() called Done() (count 0); no detached waiter.
