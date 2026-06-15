@@ -113,6 +113,45 @@ func (this *ExecutionFixture) TestUnitFlushesWhenMaxUnitSizeReached() {
 	this.So(this.executeCalls, should.Equal, []any{"m1", "m2", "m3"})
 }
 
+// TestResidentBacklogCoalescesIntoSingleUnit and TestTrickledBatchesDoNotCoalesce
+// are a contrasting pair pinning the load-dependent half of the coalescing gate
+// (01_execution.go: `len(unit.completions) < maxUnitSize && len(this.input) > 0`).
+// Identical batches, identical maxUnitSize: when the whole backlog is resident the
+// stage merges it into one unit; when each batch is fully processed before the
+// next arrives (input drains to empty) every batch flushes on its own. This is the
+// unit-level proof underlying CoalesceFixture's end-to-end assertion — if the
+// `len(this.input) > 0` term were dropped, the resident case would stop coalescing
+// and this fixture would catch it.
+func (this *ExecutionFixture) TestResidentBacklogCoalescesIntoSingleUnit() {
+	this.executeOutputs = [][]any{{"r1"}, {"r2"}, {"r3"}}
+	this.input <- &batch{instructions: []any{"m1"}, complete: func(bool) {}}
+	this.input <- &batch{instructions: []any{"m2"}, complete: func(bool) {}}
+	this.input <- &batch{instructions: []any{"m3"}, complete: func(bool) {}}
+	close(this.input)
+
+	go this.subject.Listen()
+
+	units := this.drain()
+	this.So(len(units), should.Equal, 1)
+	this.So(len(units[0].completions), should.Equal, 3)
+	this.So(this.executeCalls, should.Equal, []any{"m1", "m2", "m3"})
+}
+
+func (this *ExecutionFixture) TestTrickledBatchesDoNotCoalesce() {
+	this.executeOutputs = [][]any{{"r1"}, {"r2"}, {"r3"}}
+	go this.subject.Listen()
+
+	var sizes []int
+	for _, message := range []any{"m1", "m2", "m3"} {
+		this.input <- &batch{instructions: []any{message}, complete: func(bool) {}}
+		unit := <-this.output // block until this batch flushes before sending the next.
+		sizes = append(sizes, len(unit.completions))
+	}
+	close(this.input)
+
+	this.So(sizes, should.Equal, []int{1, 1, 1})
+}
+
 func (this *ExecutionFixture) TestEmptyExecutorOutputProducesUnitWithNoResults() {
 	this.input <- &batch{instructions: []any{"silent"}, complete: func(bool) {}}
 	close(this.input)
