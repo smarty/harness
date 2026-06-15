@@ -26,12 +26,6 @@ func newRouter(types ...any) *router {
 	}
 }
 
-func (this *router) Apply(message any) {
-	for _, a := range this.applicators[reflect.TypeOf(message)] {
-		a.Apply(message)
-	}
-}
-
 func (this *router) Execute(message any, broadcast func(...any)) {
 	for _, e := range this.executors[reflect.TypeOf(message)] {
 		e.Execute(message, func(results ...any) {

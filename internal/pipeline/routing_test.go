@@ -73,26 +73,6 @@ func (this *RouterFixture) TestExecuteIgnoresMethodsWithBadSignatures() {
 	this.So(len(this.orchestrator.executed), should.Equal, 0)
 }
 
-func (this *RouterFixture) TestApplyRoutesToAllRegisteredApplicators() {
-	this.router.Apply(resultA{value: "yay"})
-
-	this.So(this.orchestrator.applied, should.Equal, []any{resultA{value: "yay"}})
-	this.So(this.observer.applied, should.Equal, []any{resultA{value: "yay"}})
-}
-
-func (this *RouterFixture) TestApplyIgnoresMethodsWithBadSignatures() {
-	this.router.Apply(bogusApplyMsg{})
-
-	this.So(len(this.orchestrator.applied), should.Equal, 0)
-	this.So(len(this.observer.applied), should.Equal, 0)
-}
-
-func (this *RouterFixture) TestApplyUnknownTypeIsNoOp() {
-	this.router.Apply(unknownMsg{})
-
-	this.So(len(this.orchestrator.applied), should.Equal, 0)
-}
-
 func (this *RouterFixture) TestExecuteResetsExclusionsBetweenInvocations() {
 	this.router.Execute(messageA{value: "first"}, func(...any) {})
 	this.router.Execute(messageA{value: "second"}, func(...any) {})
