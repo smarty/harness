@@ -94,9 +94,9 @@ func (this *Recovery) recoverPage() ([]*contracts.Message, bool) {
 // forward splits a page into batchSize-bounded units, defending against a
 // Recoverer that returns more than the limit it was given.
 func (this *Recovery) forward(messages []*contracts.Message) {
-	for len(messages) > this.batchSize {
-		this.output <- &unitOfWork{results: messages[:this.batchSize]}
-		messages = messages[this.batchSize:]
+	for len(messages) > 0 {
+		batchSize := min(this.batchSize, len(messages))
+		this.output <- &unitOfWork{results: messages[:batchSize]}
+		messages = messages[batchSize:]
 	}
-	this.output <- &unitOfWork{results: messages}
 }
