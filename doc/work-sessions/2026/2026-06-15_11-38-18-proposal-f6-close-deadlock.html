@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proposal: F6 — Close() Must Not Deadlock Against a Handle Blocked on a Full Work Channel</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f8fa; --panel2: #eef1f4; --text: #1f2328;
+    --muted: #59636e; --accent: #0969da; --border: #d1d9e0;
+    --bad: #c62828; --warn: #e65100; --good: #2e7d32; --info: #607d8b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.6 -apple-system, "Segoe UI", Helvetica, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 32px 40px 16px; border-bottom: 1px solid var(--border); }
+  h1 { margin: 0 0 4px; font-size: 24px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  main { max-width: 1020px; margin: 0 auto; padding: 24px 40px 80px; }
+  h2 { margin-top: 40px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { margin-top: 28px; }
+  code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
+  code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; line-height: 1.45; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--panel2); }
+  .callout { border-left: 5px solid var(--accent); background: var(--panel); border-radius: 0 8px 8px 0; padding: 12px 18px; margin: 16px 0; }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.good { border-left-color: var(--good); }
+  .callout.warn { border-left-color: var(--warn); }
+  .chain { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 16px 0; font-size: 12.5px; }
+  .chain .step { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+  .chain .arrow { color: var(--muted); }
+  .chain .step.wedge { border-color: var(--bad); color: var(--bad); font-weight: 600; }
+  .chain .step.good { border-color: var(--good); color: var(--good); font-weight: 600; }
+  ul.checklist { list-style: none; padding-left: 4px; }
+  ul.checklist li { margin: 6px 0; }
+  ul.checklist li::before { content: "\2610  "; color: var(--muted); }
+  ul.checklist li.done::before { content: "\2611  "; color: var(--good); }
+  .loc { color: var(--muted); font-size: 12px; }
+  footer { color: var(--muted); font-size: 12px; text-align: center; padding: 24px; border-top: 1px solid var(--border); }
+  a { color: var(--accent); }
+  .tag { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 9px; color: #fff; }
+  .tag.red { background: var(--bad); } .tag.green { background: var(--good); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Proposal: F6 — <code>Close()</code> must not deadlock against a <code>Handle</code> blocked on a full work channel</h1>
+  <div class="meta">2026-06-15 · github.com/smarty/harness/v2 · resolves the <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html#F6">adversarial pre-release review, finding F6</a> (MEDIUM, open) · builds directly on the <a href="2026-06-12_14-40-37-proposal-f4-abandonment-panic.html">F4 abandonment-panic</a> contract</div>
+</header>
+<main>
+
+<h2>Background</h2>
+
+<p>The entrypoint protects its <code>work</code> channel with an <code>*sync.RWMutex</code>. Senders (<code>Handle</code>, <code>await</code>) hold the <strong>read</strong> lock across the channel send; <code>Close</code> takes the <strong>write</strong> lock before <code>close(this.work)</code>. This is what makes close-vs-send safe — the mutual exclusion guarantees no goroutine is mid-send when the channel is closed, so the runtime can never panic with "send on closed channel."</p>
+
+<p>The flip side is the deadlock F6 describes. <code>Handle</code> holds <code>RLock</code> <em>across</em> the send (<code>00_entrypoint.go:67-75</code>):</p>
+
+<pre><code>func (this *entrypoint) Handle(_ context.Context, messages ...any) {
+    this.lock.RLock()
+    if this.closed {
+        this.lock.RUnlock()
+        return
+    }
+    waiter, item, failed := this.prepare(messages...)
+    this.work &lt;- item          // &lt;-- blocks here while holding RLock
+    this.lock.RUnlock()
+    ...
+</code></pre>
+
+<p>If the <code>work</code> channel is full because the downstream pipeline is wedged (a dispatcher/writer outage with an <em>uncancelled</em> context), the send blocks forever <strong>holding <code>RLock</code></strong>. <code>Close()</code> then blocks forever acquiring the write lock, and — because Go's <code>RWMutex</code> gives a pending writer priority — every subsequent <code>Handle</code>/<code>admit</code> piles up behind it too. Graceful shutdown never reaches the stages that would unwedge things; the operator's only recourse is <code>SIGKILL</code>.</p>
+
+<div class="chain">
+  <span class="step wedge">downstream wedged (dispatcher outage, ctx alive)</span><span class="arrow">→</span>
+  <span class="step">work channel fills</span><span class="arrow">→</span>
+  <span class="step wedge">Handle blocks on send, holding RLock</span><span class="arrow">→</span>
+  <span class="step wedge">Close() blocks on Lock()</span><span class="arrow">→</span>
+  <span class="step wedge">shutdown never reaches downstream stages — process wedged until SIGKILL</span>
+</div>
+
+<h3>What the F4 fix did and did not close</h3>
+
+<p>The <a href="2026-06-12_14-40-37-proposal-f4-abandonment-panic.html">F4 fix</a> narrowed F6: persistence abandonment now fails completions and the parked caller panics, so a caller stranded by a <em>cancelled-context</em>-plus-failing-writer no longer holds <code>RLock</code> forever. But that only rescues the cancelled-context path. The remaining window is exactly the one above: <strong>full work channel + wedged downstream + uncancelled context</strong> (e.g., a dispatcher outage during normal operation, then an operator attempts a graceful restart). The send is blocked on a full channel — it never even reaches persistence, so the F4 completion-failure mechanism never fires.</p>
+
+<div class="callout warn"><strong>Latent twin in <code>await</code>.</strong> <code>await</code> selects its send against <code>ctx.Done()</code>, so HTTP callers normally self-rescue when their request context cancels. But a caller whose context never cancels during the wedge (e.g. <code>context.Background()</code>, a long-lived stream) holds <code>RLock</code> the same way and deadlocks <code>Close</code> identically. The review flagged <code>Handle</code>; this proposal closes both for symmetry.</div>
+
+<h2>Approach: give a blocked send a shutdown escape via the entrypoint's own <code>done</code> channel</h2>
+
+<p>The entrypoint already owns a <code>done chan struct{}</code> that <code>Close</code> closes to release <code>Listen()</code>. We make the blocked send <em>selectable against that same signal</em>, and we close <code>done</code> <strong>before</strong> acquiring the write lock so a blocked sender can observe it and release <code>RLock</code> — letting <code>Close</code> proceed to acquire the lock and close the channel.</p>
+
+<p>A sender released this way never durably stored its work (it never even entered the pipeline). By the contract established in F4, it must <strong>not</strong> return normally — that would let a message broker acknowledge unstored work. So the escape ends the same way F4 does: <strong>panic with <code>monitoring.ErrBatchAbandoned</code></strong> (after tracking <code>monitoring.BatchAbandoned</code>). The process dies, the broker redelivers, at-least-once holds. F6's resolution reuses F4's sentinel and contract verbatim — no new vocabulary.</p>
+
+<h3>Design</h3>
+
+<ol>
+  <li><strong>Close signals before it locks, and is idempotent via <code>sync.Once</code>.</strong> Closing <code>done</code> must happen <em>outside</em> the write lock (a blocked sender holds <code>RLock</code>, so <code>Close</code> cannot acquire <code>Lock</code> until the sender releases it — which only happens once it observes <code>done</code>). <code>sync.Once</code> replaces the current <code>if !this.closed</code> idempotency guard, since <code>close(done)</code> now lives outside the lock and double-close panics:
+<pre><code>func (this *entrypoint) Close() error {
+    this.closeOnce.Do(func() {
+        close(this.done)     // (1) release any sender blocked on a full work channel
+        this.lock.Lock()     // (2) now reachable: blocked senders have let go of RLock
+        this.closed = true
+        close(this.work)     // (3) safe: no sender holds RLock at this instant
+        this.lock.Unlock()
+    })
+    return nil
+}</code></pre></li>
+
+  <li><strong><code>Handle</code> selects the send against <code>done</code>, preferring an available slot.</strong> A naive single <code>select { send; done }</code> would, once <code>done</code> is closed, pick <em>randomly</em> between sending and escaping even when the channel has room — spuriously panicking callers during an otherwise-clean shutdown. A two-step select prefers a ready send deterministically and only becomes escapable when the send would actually block:
+<pre><code>select {
+case this.work &lt;- item:
+    // fast path: slot available, take it
+default:
+    select {
+    case this.work &lt;- item:           // normal full-channel backpressure...
+    case &lt;-this.done:                  // ...now escapable at shutdown
+        this.lock.RUnlock()           // release BEFORE panicking, or Close re-deadlocks
+        this.abandon(waiter, item)
+        this.waiters.Put(waiter)      // safe: abandon() drove the count to 0; no detached Wait()
+        this.monitor.Track(batchAbandoned)
+        panic(monitoring.ErrBatchAbandoned)
+    }
+}
+this.lock.RUnlock()
+this.monitor.Track(batchInFlight)
+...</code></pre>
+  During normal operation <code>done</code> is never ready, so the inner select blocks on the send exactly as today — full-channel backpressure is unchanged. The escape fires only after <code>Close</code> has closed <code>done</code>.</li>
+
+  <li><strong><code>await</code> gains the same <code>done</code> case.</strong> Its select already has <code>this.work&nbsp;&lt;-&nbsp;batch</code> and <code>&lt;-ctx.Done()</code>; we add a third <code>&lt;-this.done</code> case (and the same prefer-send fast path). The <code>ctx.Done()</code> branch is unchanged (track <code>callerDeparted</code>, return normally — the caller departed, nothing was stored, no false success to suppress). The new <code>done</code> branch mirrors <code>Handle</code>: abandon, track <code>batchAbandoned</code>, panic. HTTP stacks recover the panic into a 5xx, exactly as they already do for the F4 <code>failed.Load()</code> panic.</li>
+
+  <li><strong>No new monitoring or contract types.</strong> <code>monitoring.BatchAbandoned</code> and <code>monitoring.ErrBatchAbandoned</code> already exist from F4. The <code>done</code> escape simply tracks/panics with them. <code>abandon()</code> already exists and does exactly what we need (<code>waiter.Done()</code> + recycle the batch).</li>
+</ol>
+
+<h3>Why <code>close(work)</code> stays safe</h3>
+
+<p>The invariant is unchanged: <em>no goroutine executes <code>this.work&nbsp;&lt;-&nbsp;item</code> after <code>close(this.work)</code>.</em></p>
+<ul>
+  <li>A sender holds <code>RLock</code> throughout both the outer and inner select. <code>Close</code> cannot acquire <code>Lock</code> while any sender holds <code>RLock</code>, so at the instant <code>close(work)</code> runs, <strong>no sender is inside a send</strong>. ✓</li>
+  <li>After <code>close(work)</code>, <code>closed == true</code> (set under the same <code>Lock</code>), so any new <code>Handle</code>/<code>await</code> takes the early <code>return</code> before reaching a send. ✓</li>
+  <li>In the brief window between <code>close(done)</code> and <code>Close</code> acquiring <code>Lock</code>, a new sender may still pass the (not-yet-set) <code>closed</code> check and enter its select. With <code>done</code> already closed it either sends into a still-open channel (room available — fine) or escapes via <code>done</code> (panics — correct, it is shutdown and the work is unstored). Either way: no send after close. ✓</li>
+</ul>
+
+<div class="chain">
+  <span class="step good">Close: close(done)</span><span class="arrow">→</span>
+  <span class="step good">blocked sender observes done, RUnlocks, panics</span><span class="arrow">→</span>
+  <span class="step good">Close acquires Lock</span><span class="arrow">→</span>
+  <span class="step good">close(work)</span><span class="arrow">→</span>
+  <span class="step good">downstream drains &amp; stages close in order</span>
+</div>
+
+<h2>Trade-offs and open questions</h2>
+
+<ul>
+  <li><strong>A graceful shutdown under saturation panics in-flight senders.</strong> If the work channel is genuinely full at <code>Close</code> time, blocked senders escape-and-panic rather than waiting for a drain. This is inherent to the lock structure: <code>close(work)</code> (which begins the drain) cannot run until blocked senders release <code>RLock</code>, so a blocked sender can never "wait for the drain." The prefer-send fast path ensures senders with an <em>available</em> slot still succeed, so this only bites a truly-full channel. The outcome — process dies, broker redelivers unstored work — is correct under at-least-once and consistent with F4's "violent but honest" philosophy. The alternative (status quo) is a permanent deadlock requiring <code>SIGKILL</code>, which is strictly worse.</li>
+  <li><strong>Rejected: silent return on the <code>done</code> escape.</strong> Returning normally would let a broker ack work that was never stored — reintroducing the exact bug F4 closed. The panic is non-negotiable for the <code>Handle</code> (MQ) path.</li>
+  <li><strong>Rejected: an active-sender <code>WaitGroup</code> that <code>Close</code> drains.</strong> A counter incremented per send and waited on by <code>Close</code> would also let <code>Close</code> avoid the lock-vs-send standoff, but it is more machinery for the same outcome and still cannot let a blocked sender complete a send into a wedged downstream. Reusing the already-present <code>done</code> channel is the smaller, more legible change.</li>
+  <li><strong>Rejected: a send timeout.</strong> Any fixed timeout is arbitrary and turns a wedge into silent data loss or spurious panics under mere slowness. The <code>done</code> signal is precise: escape exactly when (and only when) shutdown is requested.</li>
+  <li><strong><code>await</code>'s exposure is more theoretical than <code>Handle</code>'s.</strong> Real HTTP request contexts cancel, so <code>await</code> usually self-rescues today. We fix it anyway for symmetry and to cover non-cancelling contexts; the cost is one extra select case.</li>
+  <li><strong>Decided — <code>await</code>'s <code>done</code> escape panics</strong> (reviewer decision, 2026-06-15): consistent with its existing <code>failed.Load()</code> panic and with <code>Handle</code>. At shutdown the work is unstored, so a false 200 is worse than the 5xx an HTTP stack produces by recovering the panic. The quieter <code>callerDeparted</code>-style return was rejected for that reason. (The unchanged <code>ctx.Done()</code> branch still returns normally — that is a genuine caller departure, not an abandonment.)</li>
+</ul>
+
+<h2>Implementation checklist</h2>
+
+<h3>Phase 1 — <span class="tag red">RED</span> regression tests at the entrypoint (the heart of F6)</h3>
+<ul class="checklist">
+  <li class="done">In <code>00_entrypoint_test.go</code>, add <code>TestHandle_PanicsAndUnblocksCloseWhenBlockedOnFullChannel</code>: construct an entrypoint over a <code>work</code> channel of capacity 1, fill it (<code>work &lt;- &amp;batch{}</code>) so the next send blocks; start <code>Handle</code> in a goroutine that captures its panic via <code>recover</code> (reuse the existing <code>capturePanic</code> helper); confirm it is blocked (not yet returned); call <code>Close()</code> and assert (a) <code>Close()</code> returns promptly (guard with a <code>time.After</code> fatal, mirroring the existing closed-pipeline tests), (b) the goroutine panics with a value satisfying <code>errors.Is(v, monitoring.ErrBatchAbandoned)</code>, and (c) <code>monitoring.BatchAbandoned{}</code> was tracked. <em>(Implemented with explicit goroutine + <code>panicked</code>/<code>closed</code> channels rather than <code>capturePanic</code>, because <code>capturePanic</code> blocks until the action returns — which never happens under the deadlocked build; the <code>time.After</code> guards must own the wait.)</em></li>
+  <li class="done">Add <code>TestAwait_PanicsAndUnblocksCloseWhenBlockedOnFullChannel</code>: same shape, using an <strong>uncancelled</strong> <code>ctx</code> (prove it no longer depends on context cancellation), asserting the same panic + <code>BatchAbandoned</code> + prompt <code>Close()</code>.</li>
+  <li class="done">Run <code>go test ./internal/pipeline/ -run 'Entrypoint' | tail -50</code>. Expect failure: today <code>Close()</code> deadlocks (the test should hit its <code>time.After</code> fatal) — confirming the bug exists and the test discriminates against it. The <code>time.After</code> guards are essential: without them a still-deadlocked build would hang the test binary rather than fail. <em>(Confirmed: both tests FAIL at the "Close() deadlocked" fatal, binary did not hang.)</em></li>
+</ul>
+
+<h3>Phase 2 — <span class="tag green">GREEN</span> production fix in <code>00_entrypoint.go</code></h3>
+<ul class="checklist">
+  <li class="done">Add a <code>closeOnce sync.Once</code> field; rewrite <code>Close()</code> to close <code>done</code> outside the lock, then take <code>Lock</code> to set <code>closed</code> and <code>close(work)</code> (design item 1).</li>
+  <li class="done">Rewrite the <code>Handle</code> send as the prefer-send / escapable two-step select (design item 2).</li>
+  <li class="done">Add the <code>&lt;-this.done</code> case (and prefer-send fast path) to <code>await</code> (design item 3).</li>
+  <li class="done">Run the Phase 1 tests — now green, promptly (no deadlock). <em>(0.48s, both pass.)</em></li>
+</ul>
+
+<h3>Phase 3 — confirm no regression in existing entrypoint behavior</h3>
+<ul class="checklist">
+  <li class="done">Run the full <code>EntrypointFixture</code> with and without <code>-race</code>: <code>TestCloseIsIdempotent</code> (now backed by <code>sync.Once</code>), <code>TestCloseReleasesListenAndClosesWorkChannel</code>, <code>TestHandle_BlocksUntilDurable</code>, <code>TestHandle_DoesNotShedAtHighWatermark</code>, <code>TestHandle_IgnoresContextCancel</code>, <code>TestHandle_ReturnsImmediatelyOnClosedPipeline</code>, and both <code>...PanicsWhenBatchAbandoned</code> tests must stay green. <em>(All green: 0.35s plain, 0.66s race.)</em></li>
+  <li class="done">Run the 16k-iteration <code>TestAwait_DepartedInFlightDoesNotCorruptPooledWaiter</code> under <code>-race</code> — the waiter-pool invariants must be untouched (the new <code>done</code> branch uses <code>abandon()</code> + <code>Put</code> exactly like the existing enqueue-departed branch). <em>(Green under <code>-race</code>.)</em></li>
+</ul>
+
+<h3>Phase 4 — end-to-end shutdown-unwedge test through <code>Build</code></h3>
+<ul class="checklist">
+  <li class="done"><span class="tag red">RED:</span> alongside <code>abandonment_test.go</code>, add a test that builds a real pipeline whose downstream is <em>wedged but not erroring</em> — e.g. a Dispatcher (or Writer) whose call blocks on a channel the test controls — with a small <code>PipelineBufferCapacity</code>. Drive enough <code>Handle</code> calls (in goroutines, capturing panics) to fill the buffers so a sender is blocked at the entrypoint with a live context; assert it is stuck; then <code>Close()</code> the pipeline and assert <code>Close()</code> returns promptly and the blocked caller panicked with <code>ErrBatchAbandoned</code>. Release the wedge so the test exits cleanly. <em>(Implemented as <code>shutdown_unwedge_test.go</code> / <code>ShutdownUnwedgeFixture</code>. The wedge point is the <strong>execution handler</strong> (a blocking <code>Execute</code>), not the Dispatcher — execution stops draining the entrypoint channel directly, which is exactly the F6 path. With <code>BurstCapacity=1</code> the effective capacity is a deterministic 2, so observing two <code>BatchInFlight</code> signals proves saturation; the two remaining callers are then blocked on the send.)</em></li>
+  <li class="done"><span class="tag green">GREEN:</span> passes with Phase 2 in place. If the end-to-end buffer sizing proves flaky, keep the entrypoint-level Phase 1 tests as the authoritative regression and downgrade this to a best-effort smoke test (note it explicitly rather than letting it flake). <em>(Not flaky: green 10× under <code>-race</code>; asserts exactly <code>callers-2</code> abandonment panics. No downgrade needed.)</em></li>
+  <li class="done">Full <code>make test | tail -50</code> green; 100% statement coverage retained in the root and pipeline packages (the new <code>done</code> branches are exercised by Phases 1 and 4). <em>(Confirmed: 100.0% in root, generic, and pipeline; green with and without <code>-race</code>.)</em></li>
+</ul>
+
+<h3>Phase 5 — documentation and bookkeeping</h3>
+<ul class="checklist">
+  <li class="done">Doc comment on <code>Close</code>/the entrypoint: closing signals blocked senders to abandon before the work channel is closed, so <code>Close</code> can never deadlock behind an in-flight send.</li>
+  <li class="done">Extend the <code>contracts.Pipeline.BlockingEntrypoint</code> doc (and the package shutdown-semantics paragraph from F4): <code>Handle</code> may also panic with <code>monitoring.ErrBatchAbandoned</code> if the pipeline is closed while the caller is blocked enqueuing into a wedged downstream.</li>
+  <li class="done">Update the review doc <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html#F6">F6</a>: set its <code>FINDINGS</code> <code>state</code> to <code>fixed</code> and append a resolution note to <code>body-F6</code> (mirroring the F4/F7 resolution notes). Re-check the F14 coverage table — the new shutdown-while-blocked-sender path is now covered. <em>(F6 → fixed with resolution note; F14 "concurrent callers through Build" row narrowed.)</em></li>
+</ul>
+
+</main>
+<footer>Proposal · smarty/harness v2 · F6 · 2026-06-15 · no code written yet — awaiting review</footer>
+</body>
+</html>

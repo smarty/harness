@@ -437,3 +437,75 @@ func (this *EntrypointFixture) TestAwaitPanicsWhenBatchAbandoned() {
 	this.So(err, should.WrapError, monitoring.ErrBatchAbandoned)
 	this.So(this.tracked, should.Contain, monitoring.BatchAbandoned{})
 }
+
+func (this *EntrypointFixture) TestHandle_PanicsAndUnblocksCloseWhenBlockedOnFullChannel() {
+	work := make(chan *batch, 1)
+	subject := newEntrypoint(this, work, 0.80)
+	work <- &batch{} // fill the channel so the next send blocks, holding RLock.
+
+	panicked := make(chan any, 1)
+	go func() {
+		defer func() { panicked <- recover() }()
+		subject.Handle(this.ctx, "wedged")
+	}()
+
+	time.Sleep(20 * time.Millisecond) // let Handle reach its blocked send.
+
+	closed := make(chan error, 1)
+	go func() { closed <- subject.Close() }()
+
+	select {
+	case err := <-closed:
+		this.So(err, should.BeNil)
+	case <-time.After(time.Second):
+		this.Fatal("Close() deadlocked behind a Handle blocked on a full work channel")
+	}
+
+	select {
+	case recovered := <-panicked:
+		err, ok := recovered.(error)
+		this.So(ok, should.BeTrue)
+		this.So(err, should.WrapError, monitoring.ErrBatchAbandoned)
+	case <-time.After(time.Second):
+		this.Fatal("Handle did not return after Close()")
+	}
+
+	this.So(this.tracked, should.Contain, monitoring.BatchAbandoned{})
+}
+
+func (this *EntrypointFixture) TestAwait_PanicsAndUnblocksCloseWhenBlockedOnFullChannel() {
+	work := make(chan *batch, 1)
+	subject := newEntrypoint(this, work, 0.80)
+	work <- &batch{} // fill the channel so the next enqueue blocks, holding RLock.
+
+	ctx := this.ctx // deliberately NOT cancellable: prove the escape no longer needs ctx.
+
+	panicked := make(chan any, 1)
+	go func() {
+		defer func() { panicked <- recover() }()
+		subject.await(ctx, "wedged")
+	}()
+
+	time.Sleep(20 * time.Millisecond) // let await reach its blocked send.
+
+	closed := make(chan error, 1)
+	go func() { closed <- subject.Close() }()
+
+	select {
+	case err := <-closed:
+		this.So(err, should.BeNil)
+	case <-time.After(time.Second):
+		this.Fatal("Close() deadlocked behind an await blocked on a full work channel")
+	}
+
+	select {
+	case recovered := <-panicked:
+		err, ok := recovered.(error)
+		this.So(ok, should.BeTrue)
+		this.So(err, should.WrapError, monitoring.ErrBatchAbandoned)
+	case <-time.After(time.Second):
+		this.Fatal("await did not return after Close()")
+	}
+
+	this.So(this.tracked, should.Contain, monitoring.BatchAbandoned{})
+}

@@ -17,6 +17,7 @@ type entrypoint struct {
 	work          chan *batch
 	lock          *sync.RWMutex
 	closed        bool
+	closeOnce     sync.Once
 	done          chan struct{}
 	shedThreshold float64
 }
@@ -71,7 +72,25 @@ func (this *entrypoint) Handle(_ context.Context, messages ...any) {
 	}
 
 	waiter, item, failed := this.prepare(messages...)
-	this.work <- item
+	select {
+	case this.work <- item:
+		// fast path: a slot is available, take it deterministically rather than
+		// racing the done case below once shutdown has closed it.
+	default:
+		select {
+		case this.work <- item:
+			// normal full-channel backpressure: block until a slot frees...
+		case <-this.done:
+			// ...but become escapable at shutdown so Close cannot deadlock behind
+			// us. The work was never stored; releasing normally would let a broker
+			// acknowledge it, so abandon and panic per the F4 contract.
+			this.lock.RUnlock()
+			this.abandon(waiter, item)
+			this.waiters.Put(waiter)
+			this.monitor.Track(batchAbandoned)
+			panic(monitoring.ErrBatchAbandoned)
+		}
+	}
 	this.lock.RUnlock()
 	this.monitor.Track(batchInFlight)
 
@@ -98,12 +117,27 @@ func (this *entrypoint) await(ctx context.Context, message any) {
 	case this.work <- batch:
 		this.lock.RUnlock()
 		this.monitor.Track(batchInFlight)
-	case <-ctx.Done():
-		this.lock.RUnlock()
-		this.abandon(waiter, batch)
-		this.waiters.Put(waiter) // safe: abandon() called Done() (count 0); no detached waiter.
-		this.monitor.Track(callerDeparted)
-		return
+	default:
+		select {
+		case this.work <- batch:
+			this.lock.RUnlock()
+			this.monitor.Track(batchInFlight)
+		case <-ctx.Done():
+			this.lock.RUnlock()
+			this.abandon(waiter, batch)
+			this.waiters.Put(waiter) // safe: abandon() called Done() (count 0); no detached waiter.
+			this.monitor.Track(callerDeparted)
+			return
+		case <-this.done:
+			// Shutdown while blocked on a wedged downstream. Unlike a caller
+			// departure, the work was never stored; panic per the F4 contract so an
+			// HTTP stack returns 5xx rather than a false success.
+			this.lock.RUnlock()
+			this.abandon(waiter, batch)
+			this.waiters.Put(waiter) // safe: abandon() called Done() (count 0); no detached waiter.
+			this.monitor.Track(batchAbandoned)
+			panic(monitoring.ErrBatchAbandoned)
+		}
 	}
 
 	select {
@@ -143,14 +177,20 @@ func (this *entrypoint) admit() bool {
 // downstream pipeline stages drain naturally.
 func (this *entrypoint) Listen() { <-this.done }
 
+// Close signals blocked senders to abandon (closing done) before it closes the
+// work channel, so Close can never deadlock behind a Handle/await stuck mid-send
+// on a wedged downstream. It is idempotent.
 func (this *entrypoint) Close() error {
-	this.lock.Lock()
-	if !this.closed {
-		close(this.work)
+	this.closeOnce.Do(func() {
+		// Close done BEFORE taking the write lock: a sender blocked on a full work
+		// channel holds RLock, so Lock is unreachable until that sender observes
+		// done and releases RLock. Only then can we safely close the work channel.
 		close(this.done)
+		this.lock.Lock()
 		this.closed = true
-	}
-	this.lock.Unlock()
+		close(this.work)
+		this.lock.Unlock()
+	})
 	return nil
 }
 

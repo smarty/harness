@@ -28,6 +28,9 @@ type Pipeline struct {
 	// acknowledge deliveries when Handle returns, and unstored work must never be
 	// acknowledged. The panic ends the (already-shutting-down) process; the broker
 	// redelivers, preserving the at-least-once contract.
+	// Handle also panics with monitoring.ErrBatchAbandoned if the pipeline is closed
+	// while the caller is still blocked enqueuing work into a wedged downstream: the
+	// work was never stored, so the same no-false-acknowledgment rule applies.
 	BlockingEntrypoint Handler
 
 	// Listeners contains each phase of the harness pipeline (serialization, persistence, broadcast, etc.).

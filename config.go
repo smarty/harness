@@ -26,9 +26,13 @@
 // returning. Returning normally would let message brokers acknowledge work
 // that was never stored. The panic deliberately ends the process — it is
 // already shutting down and can never make progress — and the broker
-// redelivers after restart. Broadcast abandonment needs no such treatment:
-// it occurs after the completion (ack) stage, and recovery redispatches
-// stored-but-undispatched messages at next startup.
+// redelivers after restart. The same panic releases a caller blocked
+// enqueuing into a wedged downstream when the pipeline is closed: closing
+// signals the entrypoint to abandon any in-flight send before it closes the
+// work channel, so shutdown can never deadlock behind a stuck Handle even
+// when the caller's context is never cancelled. Broadcast abandonment needs
+// no such treatment: it occurs after the completion (ack) stage, and recovery
+// redispatches stored-but-undispatched messages at next startup.
 //
 // Values produced by registered domain types must serialize successfully —
 // that is the calling application's contract. If the Serializer ever returns
