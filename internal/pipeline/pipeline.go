@@ -25,7 +25,7 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 	var (
 		unitPool    = generic.NewPoolT(generic.NewT[unitOfWork])
 		messagePool = generic.NewPoolT(func() *contracts.Message {
-			return &contracts.Message{Content: bytes.NewBuffer(make([]byte, initialContentBufferSize))}
+			return &contracts.Message{Content: bytes.NewBuffer(make([]byte, 0, initialContentBufferSize))}
 		})
 	)
 

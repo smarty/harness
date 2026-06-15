@@ -110,7 +110,7 @@
     <span><span class="dot" style="background:var(--info)"></span>Won't fix <b id="nWontFix">0</b></span>
     <span><span class="dot" style="background:var(--panel2);border:1px solid var(--border)"></span>Open <b id="nOpen">0</b></span>
   </div>
-  <div id="progressHint">Status lives in this file (each entry's <code>state</code> field in the FINDINGS array) and is committed to git — updated as issues are resolved. Finding bodies live in <code>&lt;template&gt;</code> elements; everything else on this page is rendered from the data. Last status update: 2026-06-12.</div>
+  <div id="progressHint">Status lives in this file (each entry's <code>state</code> field in the FINDINGS array) and is committed to git — updated as issues are resolved. Finding bodies live in <code>&lt;template&gt;</code> elements; everything else on this page is rendered from the data. Last status update: 2026-06-15.</div>
 </div>
 <div class="filters" id="filters"></div>
 <div id="findings"></div>
@@ -194,6 +194,8 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
 <template id="body-F8">
 <pre><code>return &amp;contracts.Message{Content: bytes.NewBuffer(make([]byte, initialContentBufferSize))}</code></pre>
     <p><code>bytes.NewBuffer</code> treats its argument as initial <em>contents</em>: a fresh pooled message starts with 1024 zero bytes readable in <code>Content</code>. Execution's <code>Content.Reset()</code> hides this today, so it is latent rather than live — but any future code path that reads a fresh message's Content before reset (or a Writer that handles a never-serialized message) sees 1KB of zeros. The intent is plainly <code>make([]byte, 0, initialContentBufferSize)</code>.</p>
+    <hr>
+    <p><strong>RESOLVED 2026-06-15 — capacity, not contents.</strong> <code>internal/pipeline/pipeline.go:28</code> now reads <code>bytes.NewBuffer(make([]byte, 0, initialContentBufferSize))</code>, so a fresh pooled message starts with an empty 1024-byte-capacity buffer rather than 1024 readable zero bytes. Pipeline package tests green.</p>
 </template>
 
 <template id="body-F9">
@@ -314,7 +316,7 @@ $ go test       -run TestPoolFixture -count=20 ./internal/generic/   #  0 of 20 
       loc: 'sqladapter/recovery.go:22-58 · pipeline/recovery.go:40-47',
     },
     {
-      id: 'F8', severity: 'LOW', state: 'open', evidence: 'BY INSPECTION',
+      id: 'F8', severity: 'LOW', state: 'fixed', evidence: 'BY INSPECTION',
       title: '<code>initialContentBufferSize</code> allocates 1024 bytes of <em>content</em>, not capacity',
       loc: 'pipeline.go:38-40',
     },
