@@ -40,5 +40,6 @@ func (this *Configuration) validate() (err error) {
 		err = errors.Join(err, fmt.Errorf(
 			"%w: ShedThreshold must be within 0 and 1 (got %g)", contracts.ErrInvalidConfiguration, this.ShedThreshold))
 	}
+	err = errors.Join(err, validateDomainTypes(this.DomainTypes...))
 	return err
 }

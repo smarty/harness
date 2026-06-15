@@ -124,6 +124,79 @@ func (this *ValidationFixture) TestShedThresholdOfOneIsValid() {
 	this.assertValid(config)
 }
 
+func (this *ValidationFixture) TestNilDomainTypeRejected() {
+	config := this.validConfiguration()
+	config.DomainTypes = []any{nil}
+	this.assertInvalid(config, "nil domain type")
+}
+
+func (this *ValidationFixture) TestExecutorWithDiscoverableMethodButNoGenericInterface() {
+	config := this.validConfiguration()
+	config.DomainTypes = []any{missingGenericExecutor{}}
+	this.assertInvalid(config, "ExecuteOrder", "Execute(any, func(...any))")
+}
+
+func (this *ValidationFixture) TestApplicatorWithDiscoverableMethodButNoGenericInterface() {
+	config := this.validConfiguration()
+	config.DomainTypes = []any{missingGenericApplicator{}}
+	this.assertInvalid(config, "ApplyView", "Apply(any)")
+}
+
+func (this *ValidationFixture) TestExecutorRoutesInterfaceParameter() {
+	config := this.validConfiguration()
+	config.DomainTypes = []any{interfaceRoutingExecutor{}}
+	this.assertInvalid(config, "ExecuteThing", "interface")
+}
+
+func (this *ValidationFixture) TestApplicatorRoutesInterfaceParameter() {
+	config := this.validConfiguration()
+	config.DomainTypes = []any{interfaceRoutingApplicator{}}
+	this.assertInvalid(config, "ApplyThing", "interface")
+}
+
+func (this *ValidationFixture) TestWellFormedDomainTypeAccepted() {
+	config := this.validConfiguration()
+	config.DomainTypes = []any{wellFormedHandler{}}
+	this.assertValid(config)
+}
+
+type (
+	orderCommand    struct{}
+	viewModel       struct{}
+	concreteCommand struct{}
+	thing           interface{ isThing() }
+)
+
+// missingGenericExecutor exposes a discoverable Execute* method but never
+// implements the generic executor interface, so scan would silently skip it.
+type missingGenericExecutor struct{}
+
+func (missingGenericExecutor) ExecuteOrder(_ orderCommand, _ func(...any)) {}
+
+// missingGenericApplicator is the Apply-side analog of missingGenericExecutor.
+type missingGenericApplicator struct{}
+
+func (missingGenericApplicator) ApplyView(_ viewModel) {}
+
+// interfaceRoutingExecutor implements the generic interface but routes an
+// interface type, whose key can never match a concrete runtime message type.
+type interfaceRoutingExecutor struct{}
+
+func (interfaceRoutingExecutor) Execute(any, func(...any))            {}
+func (interfaceRoutingExecutor) ExecuteThing(_ thing, _ func(...any)) {}
+
+// interfaceRoutingApplicator is the Apply-side analog of interfaceRoutingExecutor.
+type interfaceRoutingApplicator struct{}
+
+func (interfaceRoutingApplicator) Apply(any)          {}
+func (interfaceRoutingApplicator) ApplyThing(_ thing) {}
+
+// wellFormedHandler implements the generic interface and routes a concrete type.
+type wellFormedHandler struct{}
+
+func (wellFormedHandler) Execute(any, func(...any))                         {}
+func (wellFormedHandler) ExecuteConcrete(_ concreteCommand, _ func(...any)) {}
+
 type nopCollaborator struct{}
 
 func (nopCollaborator) Track(any)                                                  {}

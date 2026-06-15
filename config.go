@@ -79,6 +79,16 @@ type option func(*pipeline.Configuration)
 
 // DomainTypes registers the domain objects whose Execute.../Apply... methods drive
 // the pipeline. They are passed verbatim to newRouter(...) at build time.
+//
+// Each object must satisfy two parallel contracts: a typed discovery method per
+// message (e.g. ExecuteRenewal(Renewal, func(...any)) or ApplyRenewal(Renewal))
+// AND a generic dispatch method (Execute(any, func(...any)) / Apply(any)) that
+// switches to the matching typed method. New rejects an object that has the
+// typed methods but not the generic one, or whose typed method routes an
+// interface type (which can never match a concrete runtime message). It cannot,
+// however, detect a generic switch that omits a case it advertised via a typed
+// method: such a message routes and then silently vanishes. Keep the switch and
+// the typed methods in lockstep.
 func (singleton) DomainTypes(value ...any) option {
 	return func(this *pipeline.Configuration) { this.DomainTypes = value }
 }
