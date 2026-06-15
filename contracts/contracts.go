@@ -95,6 +95,10 @@ type (
 	Dispatcher interface {
 		Dispatch(ctx context.Context, messages ...*Message) error
 	}
+	// Monitor receives observations emitted throughout the pipeline. Track is
+	// invoked concurrently from many goroutines (the entrypoint, serialization,
+	// persistence, broadcast, and recovery stages), so implementations must be
+	// safe for concurrent use.
 	Monitor interface {
 		Track(observation any)
 	}
