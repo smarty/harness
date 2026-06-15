@@ -101,6 +101,15 @@ func (this *DispatcherFixture) TestDispatch_PublishFails_ReturnsErrorWithoutMark
 	this.So(this.dispatchedTimestamp(message.ID), should.BeNil)
 }
 
+func (this *DispatcherFixture) TestDispatch_UnassignedID_RejectedBeforePublishing() {
+	message := &contracts.Message{ID: 0, Value: dispatcherTestEvent{AccountID: 1, OrderID: 2}}
+
+	err := this.subject.Dispatch(this.ctx, message)
+
+	this.So(err, should.WrapError, errUnassignedID)
+	this.So(this.dispatched, should.BeEmpty)
+}
+
 func (this *DispatcherFixture) TestDispatch_NoMessages_NoOp() {
 	err := this.subject.Dispatch(this.ctx)
 	this.So(err, should.BeNil)

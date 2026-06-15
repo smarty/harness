@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/smarty/harness/v2/contracts"
@@ -41,6 +42,17 @@ func (this *Dispatcher) Dispatch(ctx context.Context, messages ...*contracts.Mes
 	if len(messages) == 0 {
 		return nil
 	}
+	// A message with ID==0 was never assigned an identity (a Writer that failed
+	// to assign, or a non-sqladapter Writer). The mark-dispatched UPDATE below
+	// keys on id, so such a row can never be matched: it would be published here
+	// and then republished by recovery on every restart, forever. Reject the
+	// batch before publishing — symmetric to the Writer's first<=0 identity
+	// guard — so the un-markable message is never dispatched in the first place.
+	for _, message := range messages {
+		if message.ID == 0 {
+			return errUnassignedID
+		}
+	}
 	if err := this.inner.Dispatch(ctx, messages...); err != nil {
 		return err
 	}
@@ -57,8 +69,15 @@ func (this *Dispatcher) Dispatch(ctx context.Context, messages ...*contracts.Mes
 		this.args = append(this.args, message.ID)
 	}
 	this.statement.WriteString(`)`)
+	// Rows-affected is intentionally not asserted against len(messages): the
+	// `dispatched IS NULL` guard makes redelivery idempotent, so after a crash
+	// between publish and mark, recovery republishes and this UPDATE legitimately
+	// matches fewer rows (or none) because they are already marked. The only
+	// unrecoverable case — an id that can never match — is the ID==0 guard above.
 	if _, err := this.handle.ExecContext(ctx, this.statement.String(), this.args...); err != nil {
 		return fmt.Errorf("mark dispatched: %w", err)
 	}
 	return nil
 }
+
+var errUnassignedID = errors.New("cannot mark a message dispatched: message has no assigned id (id=0); the Writer must assign positive ids")

@@ -216,6 +216,8 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
 
 <template id="body-F11">
     <p>The <code>UPDATE … WHERE dispatched IS NULL AND id IN (…)</code> result is discarded. If a message arrives with <code>ID=0</code> (a Writer that failed to assign, or a non-sqladapter Writer), the publish succeeds but the row is never marked — recovery republishes it on every restart, forever. The Writer side carefully validates <code>affected</code> and <code>first</code>; the Dispatcher's symmetric check is absent. (Re-running over already-marked rows is correctly idempotent thanks to the <code>dispatched IS NULL</code> guard; this is only about rows that <em>should</em> have matched and didn't.)</p>
+    <hr>
+    <p><strong>RESOLVED 2026-06-15 — guard the un-markable case; do <em>not</em> assert rows-affected.</strong> The fix deliberately departs from a literal "symmetric to the Writer" rows-affected check, because the finding's own parenthetical is the trap: after a crash between publish and mark, recovery republishes and the UPDATE legitimately matches fewer rows (or zero, all already marked), so <code>RowsAffected == len(messages)</code> would falsely error on the normal redelivery path. The genuinely unrecoverable case is <code>ID==0</code> — an id that can never match <code>id IN (…)</code> regardless of idempotency. <code>Dispatcher.Dispatch</code> now rejects any batch containing an <code>ID==0</code> message with the new <code>errUnassignedID</code> sentinel <em>before</em> publishing (so the un-markable message is never dispatched, and the broadcast retry loop never produces duplicate publishes), mirroring the Writer's <code>first&lt;=0</code> identity guard. A comment at the UPDATE documents why rows-affected is intentionally not asserted. Verified by a new DB-backed test (<code>TestDispatch_UnassignedID_RejectedBeforePublishing</code>: returns <code>errUnassignedID</code>, nothing reaches the inner dispatcher); the full <code>DispatcherFixture</code> (publish/mark, idempotent reuse, publish-failure) stays green against MySQL.</p>
 </template>
 
 <template id="body-F12">
@@ -337,7 +339,7 @@ $ go test       -run TestPoolFixture -count=20 ./internal/generic/   #  0 of 20 
       loc: 'sqladapter/writer.go:18-26 · sqladapter/dispatcher.go:17-22',
     },
     {
-      id: 'F11', severity: 'LOW', state: 'open', evidence: 'BY INSPECTION',
+      id: 'F11', severity: 'LOW', state: 'fixed', evidence: 'BY INSPECTION',
       title: 'Dispatcher UPDATE ignores rows-affected; ID=0 messages mark nothing',
       loc: 'sqladapter/dispatcher.go:56-59',
     },
