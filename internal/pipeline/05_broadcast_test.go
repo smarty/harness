@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -67,10 +68,7 @@ func (this *BroadcastFixture) Dispatch(ctx context.Context, messages ...*contrac
 }
 
 func (this *BroadcastFixture) drain() (results []*unitOfWork) {
-	for unit := range this.output {
-		results = append(results, unit)
-	}
-	return results
+	return slices.Collect(Drain(this.output))
 }
 
 func (this *BroadcastFixture) TestDispatchesAllResultsThenForwardsUnit() {

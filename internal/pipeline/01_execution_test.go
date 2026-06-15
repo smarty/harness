@@ -11,7 +11,6 @@ import (
 	"github.com/smarty/gunit/v2/assert/better"
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/contracts"
-	"github.com/smarty/harness/v2/internal/generic"
 )
 
 func TestExecutionFixture(t *testing.T) {
@@ -71,7 +70,7 @@ func (this *ExecutionFixture) Track(observation any) {
 }
 
 func (this *ExecutionFixture) drain() (results []*unitOfWork) {
-	return slices.Collect(generic.Drain(this.output))
+	return slices.Collect(Drain(this.output))
 }
 
 func (this *ExecutionFixture) TestSingleBatchProducesUnitOfWork() {

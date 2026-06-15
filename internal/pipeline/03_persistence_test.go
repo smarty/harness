@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -64,10 +65,7 @@ func (this *PersistenceFixture) Write(ctx context.Context, messages ...*contract
 }
 
 func (this *PersistenceFixture) drain() (results []*unitOfWork) {
-	for unit := range this.output {
-		results = append(results, unit)
-	}
-	return results
+	return slices.Collect(Drain(this.output))
 }
 
 func (this *PersistenceFixture) TestWritesAllResultsThenForwardsUnit() {

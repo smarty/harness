@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/smarty/gunit/v2"
@@ -25,10 +26,7 @@ func (this *CompletionFixture) Setup() {
 }
 
 func (this *CompletionFixture) drain() (results []*unitOfWork) {
-	for unit := range this.output {
-		results = append(results, unit)
-	}
-	return results
+	return slices.Collect(Drain(this.output))
 }
 
 func (this *CompletionFixture) TestCallsAllCompletionsThenForwards() {
