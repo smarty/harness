@@ -7,6 +7,7 @@ import (
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/contracts/monitoring"
+	"github.com/smarty/harness/v2/internal/generic"
 )
 
 type persistence struct {
@@ -27,7 +28,7 @@ func newPersistence(ctx context.Context, monitor contracts.Monitor, input, outpu
 		output:  output,
 		writer:  writer,
 		wait:    wait,
-		buffer:  make([]*contracts.Message, 0, 1024),
+		buffer:  make([]*contracts.Message, 0, workingMessageCapacity),
 	}
 }
 
@@ -38,7 +39,7 @@ func (this *persistence) Listen() {
 			this.buffer = append(this.buffer, message)
 		}
 		stored := this.store()
-		this.buffer = this.buffer[:0]
+		this.buffer = generic.Reclaim(this.buffer, workingMessageCapacity)
 		if !stored {
 			// Shutdown before durable write: do NOT forward (no ack); MQ redelivers.
 			// Failing the completions lets blocked entrypoint callers escape (by panicking).

@@ -4,6 +4,7 @@ import (
 	"reflect"
 
 	"github.com/smarty/harness/v2/contracts"
+	"github.com/smarty/harness/v2/internal/generic"
 )
 
 type execution struct {
@@ -46,10 +47,8 @@ func (this *execution) Listen() {
 	for batch := range this.input {
 		if unit == nil {
 			unit = this.newUnit()
-			clear(unit.results)
-			clear(unit.completions)
-			unit.results = unit.results[:0]
-			unit.completions = unit.completions[:0]
+			unit.results = generic.Reclaim(unit.results, workingMessageCapacity)
+			unit.completions = generic.Reclaim(unit.completions, this.maxUnitSize)
 		}
 		unit.completions = append(unit.completions, batch.complete)
 		for _, instruction := range batch.instructions {
@@ -59,7 +58,7 @@ func (this *execution) Listen() {
 					message.ID = 0
 					message.Type = this.typeNames[reflect.TypeOf(result)]
 					message.Value = result
-					message.Content.Reset()
+					message.Content = generic.ReclaimBuffer(message.Content, initialContentBufferSize)
 					message.ContentType = ""
 					unit.results = append(unit.results, message)
 				}

@@ -13,6 +13,15 @@ import (
 	"fmt"
 
 	"github.com/smarty/harness/v2/contracts"
+	"github.com/smarty/harness/v2/internal/generic"
+)
+
+// Steady-state capacities retained for the Dispatcher's reused buffers; a
+// pathologically large batch has its oversized backing arrays discarded on the
+// next call rather than pinned for the life of the process (see generic.Reclaim).
+const (
+	dispatcherArgsCapacity      = 512
+	dispatcherStatementCapacity = 1024 * 8
 )
 
 // Dispatcher reuses instance-level statement and argument buffers across calls
@@ -33,8 +42,8 @@ func NewDispatcher(inner contracts.Dispatcher, handle *sql.DB) *Dispatcher {
 	return &Dispatcher{
 		inner:     inner,
 		handle:    handle,
-		args:      make([]any, 0, 512),
-		statement: bytes.NewBuffer(make([]byte, 0, 1024*8)),
+		args:      make([]any, 0, dispatcherArgsCapacity),
+		statement: bytes.NewBuffer(make([]byte, 0, dispatcherStatementCapacity)),
 	}
 }
 
@@ -57,9 +66,8 @@ func (this *Dispatcher) Dispatch(ctx context.Context, messages ...*contracts.Mes
 		return err
 	}
 
-	clear(this.args)
-	this.args = this.args[:0]
-	this.statement.Reset()
+	this.args = generic.Reclaim(this.args, dispatcherArgsCapacity)
+	this.statement = generic.ReclaimBuffer(this.statement, dispatcherStatementCapacity)
 	this.statement.WriteString(`UPDATE Messages SET dispatched = NOW(3) WHERE dispatched IS NULL AND id IN (`)
 	for i, message := range messages {
 		if i > 0 {

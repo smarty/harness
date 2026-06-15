@@ -52,5 +52,12 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 
 const (
 	recoveryBatchSize        = 64
-	initialContentBufferSize = 1024
+	initialContentBufferSize = 2048
+
+	// workingMessageCapacity is the steady-state capacity retained for the
+	// per-unit and persistence message buffers across reuse; a unit larger than
+	// this (e.g. one command broadcasting a huge burst of events) has its
+	// oversized backing array discarded on recycle rather than pinned for the
+	// life of the process. See generic.Reclaim.
+	workingMessageCapacity = 256
 )

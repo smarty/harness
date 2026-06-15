@@ -9,6 +9,15 @@ import (
 	"fmt"
 
 	"github.com/smarty/harness/v2/contracts"
+	"github.com/smarty/harness/v2/internal/generic"
+)
+
+// Steady-state capacities retained for the Writer's reused buffers; a
+// pathologically large batch has its oversized backing arrays discarded on the
+// next call rather than pinned for the life of the process (see generic.Reclaim).
+const (
+	writerArgsCapacity      = 256
+	writerStatementCapacity = 1024 * 8
 )
 
 // Deprecated
@@ -18,6 +27,15 @@ type legacyWrite func(context.Context, *sql.Tx, ...any)
 // is therefore not safe for concurrent use; it must be driven from a single
 // goroutine (as the pipeline does). Sharing one Writer across goroutines yields
 // interleaved SQL.
+//
+// Write emits one multi-row INSERT for the whole batch and does not cap its
+// size. A batch large enough to exceed the server's max_allowed_packet fails
+// deterministically, and the pipeline's persistence stage retries failed writes
+// indefinitely — so such a batch becomes a poison message that stalls the
+// pipeline with repeated PersistenceError observations rather than being
+// dropped. Callers must keep per-unit fan-out and payload sizes within
+// max_allowed_packet (a single oversized payload is unstorable regardless of
+// batching). Bounding the INSERT size here is deferred to a future change.
 type Writer struct {
 	handle       *sql.DB
 	stride       uint64
@@ -38,9 +56,9 @@ func NewWriter(handle *sql.DB, stride uint64, legacyWrite legacyWrite) *Writer {
 		handle:       handle,
 		stride:       cmp.Or(stride, 1),
 		legacyWrite:  legacyWrite,
-		legacyValues: make([]any, 0, 256),
-		args:         make([]any, 0, 256),
-		statement:    bytes.NewBuffer(make([]byte, 0, 1024*8)),
+		legacyValues: make([]any, 0, writerArgsCapacity),
+		args:         make([]any, 0, writerArgsCapacity),
+		statement:    bytes.NewBuffer(make([]byte, 0, writerStatementCapacity)),
 	}
 }
 
@@ -66,8 +84,7 @@ func (this *Writer) Write(ctx context.Context, messages ...*contracts.Message) (
 		return err
 	}
 
-	clear(this.legacyValues)
-	this.legacyValues = this.legacyValues[:0]
+	this.legacyValues = generic.Reclaim(this.legacyValues, writerArgsCapacity)
 	for _, message := range messages {
 		this.legacyValues = append(this.legacyValues, message.Value)
 	}
@@ -77,9 +94,8 @@ func (this *Writer) Write(ctx context.Context, messages ...*contracts.Message) (
 }
 
 func (this *Writer) insertMessages(ctx context.Context, tx *sql.Tx, messages []*contracts.Message) error {
-	clear(this.args)
-	this.args = this.args[:0]
-	this.statement.Reset()
+	this.args = generic.Reclaim(this.args, writerArgsCapacity)
+	this.statement = generic.ReclaimBuffer(this.statement, writerStatementCapacity)
 	this.statement.WriteString(`INSERT INTO Messages (type, payload) VALUES `)
 	for i, message := range messages {
 		if i > 0 {
