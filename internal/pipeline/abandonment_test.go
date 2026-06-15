@@ -68,7 +68,7 @@ func (this *AbandonmentFixture) ExecuteCommand(_ abandonedCommand, broadcast fun
 func (this *AbandonmentFixture) Execute(message any, broadcast func(...any)) {
 	this.ExecuteCommand(message.(abandonedCommand), broadcast)
 }
-func (this *AbandonmentFixture) Recover(context.Context) ([]*contracts.Message, error) {
+func (this *AbandonmentFixture) Recover(context.Context, int) ([]*contracts.Message, error) {
 	return nil, nil
 }
 func (this *AbandonmentFixture) Serialize(out io.Writer, _ any) error {

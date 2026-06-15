@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proposal: F7 — Paged Recovery (bounded-memory backlog recovery)</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f8fa; --panel2: #eef1f4; --text: #1f2328;
+    --muted: #59636e; --accent: #0969da; --border: #d1d9e0;
+    --crit: #c62828; --good: #2e7d32; --warn: #b8860b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.6 -apple-system, "Segoe UI", Helvetica, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 32px 40px 16px; border-bottom: 1px solid var(--border); }
+  h1 { margin: 0 0 4px; font-size: 26px; }
+  h1 small { color: var(--muted); font-weight: normal; font-size: 15px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  main { max-width: 1000px; margin: 0 auto; padding: 24px 40px 80px; }
+  h2 { margin-top: 40px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { margin-top: 28px; }
+  code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
+  code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; line-height: 1.45; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--panel2); }
+  .callout { border: 1px solid var(--border); border-left: 5px solid var(--accent); border-radius: 8px; background: var(--panel); padding: 12px 18px; margin: 16px 0; }
+  .callout.danger { border-left-color: var(--crit); }
+  .callout.good { border-left-color: var(--good); }
+  .callout.warn { border-left-color: var(--warn); }
+  .phase { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin: 18px 0; padding: 4px 20px 14px; }
+  .phase h3 { margin-top: 14px; }
+  .phase ul.checklist { list-style: none; padding-left: 4px; margin: 8px 0; }
+  .phase ul.checklist li { margin: 9px 0; padding-left: 28px; position: relative; }
+  .phase ul.checklist input[type=checkbox] { position: absolute; left: 2px; top: 5px; margin: 0; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 10px; padding: 0 8px; letter-spacing: .4px; line-height: 1.5; vertical-align: text-bottom; margin-right: 2px; }
+  .tag.red   { color: var(--crit); border: 1px solid var(--crit); }
+  .tag.green { color: var(--good); border: 1px solid var(--good); }
+  .tag.agent { color: var(--muted); border: 1px solid var(--muted); }
+  .pipe { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 16px 0; font-size: 12px; }
+  .stage { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+  .pipe .arrow { color: var(--muted); }
+  footer { color: var(--muted); font-size: 12px; text-align: center; padding: 24px; border-top: 1px solid var(--border); }
+  a { color: var(--accent); }
+  del { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Proposal: Paged Recovery <small>— resolution for F7, github.com/smarty/harness/v2</small></h1>
+  <div class="meta">2026-06-12 · responds to <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html#F7">F7</a> of the adversarial pre-release review · status: <strong>DRAFT — awaiting approval; no code until approved</strong></div>
+</header>
+<main>
+
+<h2>Background</h2>
+<p><strong>F7 (MEDIUM):</strong> the recovery path loads the <em>entire</em> undispatched backlog into memory in one shot. Two compounding causes:</p>
+<ul>
+  <li><code>sqladapter/recovery.go:22-58</code> — the <code>SELECT … WHERE dispatched IS NULL ORDER BY id</code> has no <code>LIMIT</code>, and the row loop appends every row (full payload) into one slice before returning.</li>
+  <li><code>internal/pipeline/recovery.go:38-48</code> — <code>Recovery.Listen</code> chunks the <em>output</em> of that one call into <code>recoveryBatchSize=64</code> units; the chunking bounds unit size, not resident memory.</li>
+</ul>
+<p>Startup memory is therefore O(backlog). With <code>mediumblob</code> payloads up to 16&nbsp;MB, a few thousand rows stranded by an extended dispatcher outage can be gigabytes — and the failure mode is self-reinforcing: the bigger the backlog, the more likely recovery OOMs at startup, which prevents the dispatching that would shrink the backlog. A crash-loop with no exit.</p>
+
+<h2>Approach: pull-based paging — <code>Recover(ctx, limit)</code> called until empty</h2>
+
+<p>Invert recovery from "one giant pull, then chunk" to "pull one unit-sized page at a time, until empty." The pipeline's existing channel backpressure then bounds resident memory at a handful of pages no matter how large the backlog is.</p>
+
+<h3>1. Contract change (<code>contracts/contracts.go</code>)</h3>
+<pre><code>// before
+Recoverer interface {
+    Recover(context.Context) ([]*Message, error)
+}
+
+// after
+Recoverer interface {
+    Recover(ctx context.Context, limit int) ([]*Message, error)
+}</code></pre>
+<p>New contract, to be spelled out in the interface doc comment:</p>
+<ul>
+  <li>The pipeline calls <code>Recover</code> <strong>repeatedly</strong>; each successful call must return the <em>next</em> page (at most <code>limit</code> messages, in dispatch order) of the backlog as it existed at startup — never messages already returned by a prior successful call.</li>
+  <li>An <strong>empty result means recovery is complete</strong>; the pipeline stops calling and opens the gate to live traffic.</li>
+  <li>An error must not lose ground: the pipeline retries (backoff, as today), and the implementation must re-serve the failed page rather than skip it.</li>
+  <li>Implementations are stateful cursors, invoked from a single goroutine (consistent with <code>Writer</code>/<code>Dispatcher</code> — see F10).</li>
+</ul>
+<div class="callout good"><strong>Why change the signature instead of just documenting loop-until-empty on the old one?</strong> The old signature with silently-changed semantics is a trap: any existing implementation that returns the full backlog on <em>every</em> call would re-publish in-flight rows on each iteration (duplicates bounded only by dispatcher progress, unbounded if dispatch is down). Adding the <code>limit</code> parameter makes every implementation <strong>fail to compile</strong>, forcing each author to confront the paging contract once. The module is pre-tag, so this is not a breaking release. A side benefit: the page size stays a pipeline-owned constant (<code>recoveryBatchSize=64</code>) passed in per call — the adapter needs no configuration of its own, and one page is exactly one unit of work.</div>
+
+<h3>2. Pipeline loop (<code>internal/pipeline/recovery.go</code>)</h3>
+<p><code>Listen</code> becomes a page loop; the retry/backoff logic is unchanged in spirit but moves inside it:</p>
+<ul>
+  <li>Loop: recover one page (retrying with backoff on error, exactly as today); forward it as a unit on <code>output</code>; repeat until an empty page.</li>
+  <li>The failure-streak counter (<code>RecoveryError.Attempt</code>) <strong>resets after each successful page</strong> — backoff measures consecutive failures, not lifetime calls (error, error, success, error yields <code>Attempt</code> values 1, 2, then 1 — not 1, 2, 3).</li>
+  <li><code>RecoveryComplete{Count}</code> is emitted <strong>once</strong>, after the empty page, with the <em>total</em> recovered across all pages (still emitted with <code>Count: 0</code> on a clean, empty run — F12 semantics preserved).</li>
+  <li>Context cancellation mid-pagination: emit <code>RecoveryAbandoned{Attempts}</code> and return without <code>RecoveryComplete</code> (current abandonment shape). Pages already forwarded are already durable rows; whatever isn't dispatched before shutdown is re-recovered at next start — the existing at-least-once contract, unchanged.</li>
+  <li>Keep the defensive chunking loop: a misbehaving Recoverer that returns more than <code>limit</code> still gets split into ≤<code>batchSize</code> units.</li>
+</ul>
+<p>The documented F5 semantics (a failing Recoverer deliberately backs up the whole pipeline; broadcast drains <code>work4a</code> before live traffic) are untouched — the gate now opens after the final empty page instead of after the single big call.</p>
+
+<h3>3. Keyset pagination in the adapter (<code>sqladapter/recovery.go</code>)</h3>
+<pre><code>type Recovery struct {
+    handle      *sql.DB
+    cursor      uint64 // advances past each successfully returned page; starts at MIN(id)-1 of the backlog
+    boundary    uint64 // MAX(id) of the backlog, snapshotted on the first call
+    snapshotted bool
+}</code></pre>
+<ul>
+  <li><strong>First call only:</strong> snapshot the actual bounds of the backlog up front via
+<pre><code>SELECT MIN(id), MAX(id) FROM Messages WHERE dispatched IS NULL;</code></pre>
+  Both <code>NULL</code> (no backlog) means recovery is already complete — return the empty page without ever issuing a page query. Otherwise <code>cursor = min - 1</code> (auto-increment ids start at 1, so no underflow) and <code>boundary = max</code>. Deriving both bounds from the backlog itself — rather than a table-wide <code>MAX(id)</code> — buys two things: the min bound lets every page query skip the potentially enormous prefix of old, already-dispatched rows via a primary-key range (no reliance on an index over <code>dispatched</code>), and the max bound stops pagination at the end of the actual backlog instead of walking the dispatched tail of the table.</li>
+  <li><strong>Every subsequent call:</strong>
+<pre><code>SELECT id, type, payload
+  FROM Messages
+ WHERE dispatched IS NULL AND id &gt; ? AND id &lt;= ?   -- cursor, boundary
+ ORDER BY id
+ LIMIT ?;                                           -- limit</code></pre></li>
+  <li>Advance <code>cursor</code> to the last returned id only after the row scan completes cleanly (including <code>rows.Err()</code>) — a failed page is re-served on retry, never skipped.</li>
+  <li><code>NewRecovery(handle)</code> is unchanged; the message construction (pooling note, hard-coded <code>application/json</code>) is unchanged.</li>
+</ul>
+<div class="callout warn"><strong>Why the <code>boundary</code> snapshot matters:</strong> live traffic persists new <code>dispatched IS NULL</code> rows <em>while</em> recovery is paging (persistence runs concurrently; only broadcast waits on recovery). Without an upper bound, later pages would pick those rows up and recovery would publish them — and so would the live broadcast path when its turn comes, a <em>systematic</em> duplicate for everything written during the recovery window; under sustained traffic, pagination would chase the head and never terminate. Bounding pages to the backlog's <code>MAX(id)</code>-at-first-call reproduces today's single-snapshot semantics exactly: recovery owns the backlog that predates startup, the live path owns everything after.</div>
+
+<h3>Memory before / after</h3>
+<table>
+  <tr><th></th><th>Before</th><th>After</th></tr>
+  <tr><td>Resident during recovery</td><td>O(backlog) — every payload at once</td><td>O(pages in flight) — ≤ 64 messages per page × (1 being read + <code>PipelineBufferCapacity</code>=4 buffered in <code>work4a</code> + 1 in broadcast) ≈ a few hundred messages, regardless of backlog size</td></tr>
+  <tr><td>DB round trips</td><td>1</td><td>⌈backlog/64⌉ + 2 (bounds snapshot + final empty page); just 1 when the backlog is empty — primary-key range scans confined to the backlog's id range, trivial next to the per-row publish that follows each page</td></tr>
+  <tr><td>OOM crash-loop risk</td><td>Self-reinforcing</td><td>Eliminated: each page is dispatched (shrinking the backlog) before the next is held</td></tr>
+</table>
+
+<h2>Trade-offs and alternatives considered</h2>
+<table>
+  <tr><th>Alternative</th><th>Why not</th></tr>
+  <tr><td><strong>Keep the signature; document loop-until-empty</strong></td><td>Silent semantic change — existing implementations compile and misbehave (see callout above). Rejected.</td></tr>
+  <tr><td><strong>Iterator: <code>Recover(ctx) iter.Seq2[*Message, error]</code></strong></td><td>Streams elegantly, but mid-stream failure handling gets murky: the pipeline's retry loop would need to abandon a partially consumed sequence and start a fresh one, re-yielding rows already forwarded (extra duplicate publishes on every transient error). Paging keeps retry trivially resumable. Also a heavier conceptual ask of third-party implementers than "return the next page."</td></tr>
+  <tr><td><strong>Callback: <code>Recover(ctx, emit func(...*Message) error) error</code></strong></td><td>Inversion of control complicates the station's select/abandonment logic and tests; same retry murkiness as the iterator.</td></tr>
+  <tr><td><strong>Page-size state in the adapter (<code>NewRecovery(handle, pageSize)</code>)</strong></td><td>Two knobs that must agree (adapter page vs. pipeline <code>recoveryBatchSize</code>); passing <code>limit</code> per call keeps one owner and zero new configuration surface.</td></tr>
+</table>
+<p>Honest downsides of the chosen approach:</p>
+<ul>
+  <li><strong>The Recoverer contract is more demanding.</strong> Implementations must maintain a cursor and a snapshot boundary correctly; a buggy one that re-serves rows causes duplicate publishes (tolerated by the at-least-once contract, but noisy). Mitigation: the contract doc spells out the rules, and the sqladapter implementation is the worked example. The pipeline does <em>not</em> add a non-advancing-page watchdog — that's complexity guarding against a contract violation the docs forbid; flagged here as a conscious omission.</li>
+  <li><strong>Memory is bounded in rows, not bytes.</strong> 64 × 16 MB worst-case payloads is still ~1 GB per page in pathological cases. Realistic payloads are KBs, so the practical bound is MBs; a byte-budgeted page would require schema-aware sizing and is not worth it now. Noted for the future: <code>recoveryBatchSize</code> could become an <code>Options</code> knob without any further contract change.</li>
+  <li><strong>Late-committing transactions</strong> holding an auto-increment id ≤ boundary but committing after recovery pages past it are invisible to recovery — identical to today's single-SELECT behavior (such rows belong to live units and are dispatched by the live path). No regression; documented for completeness.</li>
+</ul>
+
+<h2>Blast radius</h2>
+<p>Every <code>Recoverer</code> implementation in the module (all found by audit; each gets the new parameter):</p>
+<table>
+  <tr><th>File</th><th>Change</th></tr>
+  <tr><td><code>contracts/contracts.go:60-62</code></td><td>Signature + full paging-contract doc comment</td></tr>
+  <tr><td><code>config.go:168</code> (<code>nop</code>)</td><td>Add <code>int</code> param; still returns <code>nil, nil</code> (empty page = instant completion — correct)</td></tr>
+  <tr><td><code>internal/pipeline/config_test.go:130</code> (<code>nopCollaborator</code>)</td><td>Same mechanical update</td></tr>
+  <tr><td><code>internal/pipeline/pipeline_test.go:86</code>, <code>abandonment_test.go:71</code>, <code>pool_hygiene_test.go:46</code></td><td>Same mechanical update (all return <code>nil, nil</code> — already conformant)</td></tr>
+  <tr><td><code>internal/pipeline/recovery_test.go</code> (<code>RecoveryFixture</code>)</td><td>Restructured to serve a scripted sequence of pages/errors (Phase 2)</td></tr>
+  <tr><td><code>sqladapter/recovery.go</code> + <code>recovery_test.go</code></td><td>Keyset pagination (Phase 3)</td></tr>
+</table>
+<p>F14's open "sqladapter without DB" and "concurrent callers" gaps are unaffected; this work adds DB-backed paging tests to the sqladapter suite. The review doc's F7 entry gets a resolution note at the end (Phase 4).</p>
+
+<h2>Implementation checklist</h2>
+
+<div class="phase">
+<h3>Phase 1 — Contract change &amp; mechanical propagation <span class="tag agent">AGENT</span></h3>
+<ul class="checklist">
+  <li><input type="checkbox" checked> Update <code>contracts.Recoverer</code> to <code>Recover(ctx context.Context, limit int) ([]*Message, error)</code> with the full paging-contract doc comment (repeated calls, ≤limit per page, empty = complete, failed page re-served, single-goroutine stateful cursor, snapshot-at-startup semantics).</li>
+  <li><input type="checkbox" checked> Mechanically add the <code>limit</code> parameter to: <code>nop</code> (config.go), <code>nopCollaborator</code> (internal/pipeline/config_test.go), the fakes in <code>pipeline_test.go</code>, <code>abandonment_test.go</code>, <code>pool_hygiene_test.go</code>, the <code>RecoveryFixture</code> fake (recovery_test.go), and <code>sqladapter.Recovery.Recover</code> (transitional: accepts and ignores <code>limit</code> until Phase 3 — noted here so the intermediate state is deliberate, not forgotten).</li>
+  <li><input type="checkbox" checked> <code>internal/pipeline/recovery.go</code>: pass <code>this.batchSize</code> as the limit argument (single-call behavior otherwise unchanged for now).</li>
+  <li><input type="checkbox" checked> Run <code>make test 2&gt;&amp;1 | tail -50</code> — full suite compiles and stays green (no behavior change yet).</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase 2 — Pipeline page loop <span class="tag agent">AGENT</span></h3>
+<ul class="checklist">
+  <li><input type="checkbox" checked> <span class="tag red">RED</span> Restructure <code>RecoveryFixture</code>: replace the single <code>recovered</code> slice + <code>recoverErrs</code> queue with one scripted queue (each entry is either a page <code>[]*contracts.Message</code> or an <code>error</code>); <code>Recover</code> pops the next entry, returning an empty page when the script is exhausted; assert the <code>limit</code> argument equals the fixture's batch size on every call.</li>
+  <li><input type="checkbox" checked> <span class="tag red">RED</span> Update existing tests to the paging contract: <em>NothingToRecover</em> (1 call, <code>RecoveryComplete{0}</code>), <em>RecoveredMessages</em> (page then empty → 2 calls, <code>RecoveryComplete{2}</code>), <em>RecoverError_TracksThenWaitsThenRetries</em>, <em>WaitFails_Abandons</em> (shapes preserved, call counts updated).</li>
+  <li><input type="checkbox" checked> <span class="tag red">RED</span> Add new tests: <em>MultiplePages_ForwardedInOrder_SingleCompleteTotal</em> (pages [2 msgs], [1 msg], empty → 3 units in order, one <code>RecoveryComplete{3}</code>); <em>ErrorBetweenPages_ResumesAndResetsAttempt</em> (page, error, page, empty → both pages forwarded, the post-success <code>RecoveryError.Attempt == 1</code>, <code>RecoveryComplete{2}</code>); <em>AbandonmentMidPagination</em> (page, error, cancelled wait → first page forwarded, <code>RecoveryAbandoned{1}</code>, <strong>no</strong> <code>RecoveryComplete</code>); <em>OversizedPageStillChunked</em> (page of 2 with batchSize 1 → 2 units).</li>
+  <li><input type="checkbox" checked> <span class="tag red">RED</span> Run <code>go test ./internal/pipeline/ -run TestRecoveryFixture | tail -30</code> — confirm the new tests fail for the right reason (loop not implemented: only one page consumed / wrong observation counts).</li>
+  <li><input type="checkbox" checked> <span class="tag green">GREEN</span> Implement the page loop in <code>internal/pipeline/recovery.go</code> per the Approach (§2): page loop with retry/backoff per failure streak, single <code>RecoveryComplete{Count: total}</code> after the empty page, <code>RecoveryAbandoned</code> on cancelled wait, defensive chunking retained, <code>defer close(this.output)</code> preserved.</li>
+  <li><input type="checkbox" checked> <span class="tag green">GREEN</span> Run <code>go test -race ./internal/pipeline/ | tail -20</code> — all green.</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase 3 — sqladapter keyset pagination <span class="tag agent">AGENT</span></h3>
+<ul class="checklist">
+  <li><input type="checkbox" checked> <span class="tag red">RED</span> Update <code>sqladapter/recovery_test.go</code>: add a <code>drain(limit int)</code> helper (calls <code>Recover</code> until an empty page, collecting pages); update existing tests to drain. New tests: <em>Paging_FivePagesOfTwo</em> (seed 5 undispatched, limit 2 → per-call lengths [2, 2, 1, 0], ids strictly ascending across pages); <em>DispatchedRowsSkippedAcrossPages</em>; <em>BoundarySnapshot_RowsInsertedAfterFirstCallNeverReturned</em> (call once, seed more undispatched rows, drain → late rows absent); <em>EmptyBacklog_CompletesOnFirstCall</em> (only dispatched rows present → first call returns the empty page straight from the NULL min/max snapshot); <em>FailedPageIsReServed</em> (call with a cancelled context → error; call again with a good context → the same full page, proving the cursor did not advance).</li>
+  <li><input type="checkbox" checked> <span class="tag red">RED</span> Run <code>go test ./sqladapter/ -run TestRecoveryFixture | tail -30</code> (MySQL up, not <code>-short</code>) — new tests fail for the right reason (no LIMIT/cursor/boundary yet).</li>
+  <li><input type="checkbox" checked> <span class="tag green">GREEN</span> Implement the MIN/MAX backlog-bounds snapshot (first call), cursor advancement, and LIMIT-ed page query in <code>sqladapter/recovery.go</code> as specified in the Approach; update the type doc comment (stateful single-goroutine cursor — also closes the Recovery slice of F10's documentation gap).</li>
+  <li><input type="checkbox" checked> <span class="tag green">GREEN</span> Run <code>go test ./sqladapter/ | tail -20</code> — all green.</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase 4 — Documentation, review-doc status, full verification <span class="tag agent">AGENT</span></h3>
+<ul class="checklist">
+  <li><input type="checkbox" checked> Verify the F5-related comments still read correctly (<code>Recovery.recover</code> backpressure note, <code>broadcast.Listen</code> startup-drain note) and adjust wording for the page loop where needed; confirm the <code>harness</code> package doc needs no change.</li>
+  <li><input type="checkbox" checked> Update the review document: append a resolution note to <code>template id="body-F7"</code> (decision, mechanism, verification) and flip F7's <code>state</code> to <code>fixed</code> in the FINDINGS array.</li>
+  <li><input type="checkbox" checked> Run <code>make test 2&gt;&amp;1 | tail -50</code> — full suite green under <code>-race</code>; statement coverage remains 100% in root and pipeline packages.</li>
+  <li><input type="checkbox" checked> Run the sqladapter suite against MySQL one final time: <code>go test ./sqladapter/ | tail -20</code>.</li>
+</ul>
+</div>
+
+<h2>Out of scope</h2>
+<ul>
+  <li>Making <code>recoveryBatchSize</code> an <code>Options</code> knob (noted as a zero-contract-change follow-up if ever needed).</li>
+  <li>Byte-budgeted (rather than row-budgeted) pages.</li>
+  <li>F10's Writer/Dispatcher doc comments (only the Recovery type's doc is touched here, since it's being rewritten anyway).</li>
+</ul>
+
+</main>
+<footer>Proposal · F7 paged recovery · smarty/harness v2 · 2026-06-12 · no code will be written until this proposal is approved</footer>
+</body>
+</html>

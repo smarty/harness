@@ -126,9 +126,9 @@ func (this *ValidationFixture) TestShedThresholdOfOneIsValid() {
 
 type nopCollaborator struct{}
 
-func (nopCollaborator) Track(any)                                             {}
-func (nopCollaborator) Recover(context.Context) ([]*contracts.Message, error) { return nil, nil }
-func (nopCollaborator) Serialize(io.Writer, any) error                        { return nil }
-func (nopCollaborator) ContentType() string                                   { return "" }
-func (nopCollaborator) Write(context.Context, ...*contracts.Message) error    { return nil }
-func (nopCollaborator) Dispatch(context.Context, ...*contracts.Message) error { return nil }
+func (nopCollaborator) Track(any)                                                  {}
+func (nopCollaborator) Recover(context.Context, int) ([]*contracts.Message, error) { return nil, nil }
+func (nopCollaborator) Serialize(io.Writer, any) error                             { return nil }
+func (nopCollaborator) ContentType() string                                        { return "" }
+func (nopCollaborator) Write(context.Context, ...*contracts.Message) error         { return nil }
+func (nopCollaborator) Dispatch(context.Context, ...*contracts.Message) error      { return nil }

@@ -43,7 +43,7 @@ func (this *PoolHygieneFixture) Write(_ context.Context, messages ...*contracts.
 	return nil
 }
 
-func (this *PoolHygieneFixture) Recover(context.Context) ([]*contracts.Message, error) {
+func (this *PoolHygieneFixture) Recover(context.Context, int) ([]*contracts.Message, error) {
 	return nil, nil
 }
 func (this *PoolHygieneFixture) Track(any)                                             {}

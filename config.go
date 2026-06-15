@@ -164,9 +164,9 @@ func (singleton) defaults(options ...option) []option {
 // zero options and still produce a runnable (if inert) pipeline.
 type nop struct{}
 
-func (nop) Track(any)                                             {}
-func (nop) Recover(context.Context) ([]*contracts.Message, error) { return nil, nil }
-func (nop) Serialize(io.Writer, any) error                        { return nil }
-func (nop) ContentType() string                                   { return "" }
-func (nop) Write(context.Context, ...*contracts.Message) error    { return nil }
-func (nop) Dispatch(context.Context, ...*contracts.Message) error { return nil }
+func (nop) Track(any)                                                  {}
+func (nop) Recover(context.Context, int) ([]*contracts.Message, error) { return nil, nil }
+func (nop) Serialize(io.Writer, any) error                             { return nil }
+func (nop) ContentType() string                                        { return "" }
+func (nop) Write(context.Context, ...*contracts.Message) error         { return nil }
+func (nop) Dispatch(context.Context, ...*contracts.Message) error      { return nil }

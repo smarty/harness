@@ -40,9 +40,9 @@ func newBroadcast(
 
 func (this *broadcast) Listen() {
 	defer close(this.output)
-	// Recovered (stored-but-undispatched) messages are dispatched before any
-	// live traffic, so this station idles while a failing Recoverer retries
-	// and the pipeline backs up behind it — deliberate; see Recovery.recover.
+	// Recovered (stored-but-undispatched) messages are dispatched page by page
+	// before any live traffic, so this station idles while a failing Recoverer
+	// retries and the pipeline backs up behind it — deliberate; see Recovery.Listen.
 	this.processFrom(this.startup)
 	this.processFrom(this.input)
 }

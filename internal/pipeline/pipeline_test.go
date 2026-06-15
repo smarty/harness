@@ -83,7 +83,7 @@ func (this *PipelineFixture) Execute(message any, broadcast func(...any)) {
 	this.ExecuteCommand(commandType(""), broadcast)
 }
 
-func (this *PipelineFixture) Recover(ctx context.Context) ([]*contracts.Message, error) {
+func (this *PipelineFixture) Recover(ctx context.Context, _ int) ([]*contracts.Message, error) {
 	this.So(ctx.Value("testing"), should.Equal, this.Name())
 	return nil, nil
 }

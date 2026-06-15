@@ -185,6 +185,8 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
 
 <template id="body-F7">
     <p>The recovery SELECT has no LIMIT and accumulates every row (full payloads) into a slice before the pipeline chunks it (<code>recoveryBatchSize=64</code> chunks the <em>output</em>, not the read). After an extended dispatcher outage — precisely when backlog is largest — startup memory is O(backlog). With <code>mediumblob</code> payloads up to 16MB each, a few thousand stuck rows can be gigabytes. A crash-loop here is self-reinforcing: OOM at startup prevents the dispatch that would shrink the backlog. A LIMIT + loop-until-empty (or streaming rows into units) would bound it; today nothing does.</p>
+    <hr>
+    <p><strong>RESOLVED 2026-06-15 — recovery is now pull-based paging, bounding resident memory regardless of backlog size.</strong> The <code>Recoverer</code> contract gained a <code>limit</code> parameter (<code>Recover(ctx, limit)</code>): the pipeline calls it repeatedly, each call returns the next page (≤<code>limit</code>, in dispatch order), and an empty page signals completion. Adding the parameter forces every implementation to fail to compile and confront the paging contract, rather than silently re-publishing the full backlog on each loop iteration. <code>internal/pipeline/recovery.go</code> became a page loop that forwards each page as units, resets its failure-streak counter after every successful page, and emits a single <code>RecoveryComplete{Count: total}</code> after the empty page (abandonment mid-pagination still emits <code>RecoveryAbandoned</code> with no completion). <code>sqladapter.Recovery</code> is now a stateful keyset cursor: the first call snapshots the backlog's <code>MIN/MAX(id)</code> bounds (rows written by live traffic during the recovery window fall outside the boundary and are left for the live path; an empty backlog completes from the snapshot alone), and each subsequent call runs a primary-key range query (<code>id &gt; cursor AND id &lt;= boundary ORDER BY id LIMIT ?</code>), advancing the cursor only after a clean scan so a failed page is re-served, never skipped. Resident memory drops from O(backlog) to O(pages in flight); the OOM crash-loop is eliminated since each page is dispatched before the next is held. Verified by new <code>RecoveryFixture</code> unit tests (multi-page ordering, single total count, error-between-pages streak reset, abandonment mid-pagination, oversized-page chunking) and new DB-backed <code>sqladapter</code> tests (five-pages-of-two, dispatched-rows-skipped, boundary snapshot excludes late rows, empty-backlog single call, failed-page re-served); full suite green under <code>-race</code>, 100% statement coverage retained in root and pipeline packages.</p>
 </template>
 
 <template id="body-F8">
@@ -305,7 +307,7 @@ $ go test       -run TestPoolFixture -count=20 ./internal/generic/   #  0 of 20 
       loc: '00_entrypoint.go:59-73, 128-137',
     },
     {
-      id: 'F7', severity: 'MEDIUM', state: 'open', evidence: 'BY INSPECTION',
+      id: 'F7', severity: 'MEDIUM', state: 'fixed', evidence: 'BY INSPECTION',
       title: 'Recovery loads the entire undispatched backlog into memory in one query',
       loc: 'sqladapter/recovery.go:22-58 · pipeline/recovery.go:40-47',
     },

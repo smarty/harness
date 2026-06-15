@@ -49,6 +49,22 @@ type (
 type (
 	// Recoverer loads stored-but-undispatched messages at startup; the pipeline
 	// dispatches them before any live traffic to preserve dispatch order.
+	//
+	// Recovery is paged: the pipeline calls Recover repeatedly, and each
+	// successful call must return the next page — at most limit messages, in
+	// dispatch order — of the backlog as it existed at startup, never messages
+	// already returned by a prior successful call. An empty result means
+	// recovery is complete: the pipeline stops calling and opens the gate to
+	// live traffic. To bound resident memory, an implementation must therefore
+	// snapshot the backlog's upper bound on its first call and page within it,
+	// so rows written by live traffic during the recovery window are excluded
+	// (they belong to the live path, not recovery).
+	//
+	// An error must not lose ground: the pipeline retries with backoff, and the
+	// implementation must re-serve the failed page on the next call rather than
+	// skip it (advance the cursor only after a page is returned cleanly).
+	// Implementations are stateful cursors invoked from a single goroutine.
+	//
 	// Recover is retried with backoff until it succeeds or the pipeline context
 	// is cancelled, and while it fails, dispatching is stalled and the pipeline
 	// deliberately backs up: the Recoverer reads from the same datastore the
@@ -58,7 +74,7 @@ type (
 	// restored, then RecoveryComplete; shutdown during the retry loop emits
 	// RecoveryAbandoned and the next start retries recovery.
 	Recoverer interface {
-		Recover(context.Context) ([]*Message, error)
+		Recover(ctx context.Context, limit int) ([]*Message, error)
 	}
 	Serializer interface {
 		Serialize(out io.Writer, in any) error
