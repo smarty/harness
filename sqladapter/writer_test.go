@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -133,6 +134,94 @@ func (this *WriterFixture) TestWrite_ReuseBookkeeping() {
 	_ = this.subject.Write(this.ctx, message) // multiple calls reset internally re-used values (statement, args, etc...)
 
 	this.So(this.countMessages(), should.Equal, 2)
+}
+
+// TestConcurrentWriters_AssignedIDsMatchActualRows exercises the central claim
+// documented on assignIDs: a single multi-row "simple insert" reserves a block
+// of consecutive auto-increment values spaced by stride, and this holds even
+// when several connections insert into the Messages table at once (MySQL's
+// innodb_autoinc_lock_mode = 2 reserves a contiguous block per statement). Each
+// writer stamps a globally unique payload onto every message; after the storm,
+// the assigned IDs must form a partition of the table with no collisions and
+// each ID must point at the exact row that writer wrote. If concurrent inserts
+// ever interleaved within a single statement's reserved block, an assigned ID
+// would land on another writer's row and the payload comparison would catch it.
+func (this *WriterFixture) TestConcurrentWriters_AssignedIDsMatchActualRows() {
+	const (
+		writers          = 8
+		batchesPerWriter = 20
+		messagesPerBatch = 5
+	)
+	stride := this.autoIncrementIncrement()
+
+	records := make([][]writeRecord, writers)
+	errs := make([]error, writers)
+	var waiter sync.WaitGroup
+	for w := range writers {
+		waiter.Add(1)
+		go func() {
+			defer waiter.Done()
+			records[w], errs[w] = this.runWriter(w, stride, batchesPerWriter, messagesPerBatch)
+		}()
+	}
+	waiter.Wait()
+
+	expected := make(map[uint64]string)
+	for w := range writers {
+		this.So(errs[w], should.BeNil)
+		for _, record := range records[w] {
+			_, duplicate := expected[record.id]
+			this.So(duplicate, should.BeFalse) // assigned IDs must never collide across writers
+			expected[record.id] = record.payload
+		}
+	}
+
+	this.So(this.allRows(), should.Equal, expected)
+}
+
+func (this *WriterFixture) runWriter(writerID int, stride uint64, batches, perBatch int) (results []writeRecord, err error) {
+	writer := NewWriter(this.handle, stride, func(context.Context, *sql.Tx, ...any) {})
+	for batch := range batches {
+		messages := make([]*contracts.Message, 0, perBatch)
+		for m := range perBatch {
+			event := orderReceived{AccountID: uint64(writerID), OrderID: uint64(batch*perBatch + m)}
+			messages = append(messages, serializedMessage(event, ""))
+		}
+		if err := writer.Write(this.ctx, messages...); err != nil {
+			return nil, err
+		}
+		for _, message := range messages {
+			results = append(results, writeRecord{id: message.ID, payload: string(message.Content.Bytes())})
+		}
+	}
+	return results, nil
+}
+
+type writeRecord struct {
+	id      uint64
+	payload string
+}
+
+func (this *WriterFixture) autoIncrementIncrement() uint64 {
+	var result uint64
+	err := this.handle.QueryRow(`SELECT @@auto_increment_increment`).Scan(&result)
+	this.So(err, should.BeNil)
+	return result
+}
+
+func (this *WriterFixture) allRows() map[uint64]string {
+	rows, err := this.handle.Query(`SELECT id, payload FROM Messages`)
+	this.So(err, should.BeNil)
+	defer func() { _ = rows.Close() }()
+	results := make(map[uint64]string)
+	for rows.Next() {
+		var id uint64
+		var payload []byte
+		this.So(rows.Scan(&id, &payload), should.BeNil)
+		results[id] = string(payload)
+	}
+	this.So(rows.Err(), should.BeNil)
+	return results
 }
 
 func TestAssignIDsFixture(t *testing.T) {
