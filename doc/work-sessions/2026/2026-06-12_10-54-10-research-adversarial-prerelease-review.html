@@ -250,6 +250,8 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
       <li><del><code>generic.Drain</code> is exported (within internal/) but unused by the pipeline — test-only utility living in prod code.</del> <strong>RESOLVED 2026-06-15</strong> — moved to <code>internal/pipeline/helpers_for_test.go</code> (a <code>_test.go</code> file, so it compiles only into the test binary, not the production build) in the package whose fixtures actually use it; its test fixture moved along with it and <code>internal/generic</code> no longer carries it. Prod build, vet, and tests for both packages green.</li>
       <li>Recovery hard-codes <code>ContentType: "application/json"</code> with a clear TODO-style comment — fine for now, but it will silently mislabel payloads the moment a non-JSON serializer is configured. The comment acknowledges this; flagging so it makes the schema-migration backlog.</li>
     </ul>
+    <hr>
+    <p><strong>RESOLVED 2026-06-15.</strong> Four of the five bullets fixed (dead <code>router.Apply</code> removed; <code>generic.Drain</code> relocated to a pipeline <code>_test.go</code> helper; <code>contracts.Monitor</code> documented as concurrency-safe-required; <code>Recovery</code> stage type unexported). The fifth — hard-coded <code>ContentType: "application/json"</code> — is consciously <strong>deferred</strong>, not fixed: it is correct for the only serializer shipping today, already carries an in-code TODO comment, and properly belongs to the schema-migration backlog rather than the pre-release gate.</p>
 </template>
 
 <template id="body-F16">
@@ -263,6 +265,8 @@ zz_repro_test.go:120: 38 of 100 messages carried a stale pooled Type
       <li><strong>Race detector:</strong> full suite (including DB integration) clean under <code>-race</code>.</li>
       <li><strong>Serialization panic policy:</strong> deliberate, documented in three places, tracked before panicking. Agree with the design.</li>
     </ul>
+    <hr>
+    <p><strong>Closed 2026-06-15 — informational, no action required.</strong> This entry is the reviewer's list of properties checked and confirmed <em>correct</em>; there was never anything to remediate. Marked resolved purely so it leaves the open count.</p>
 </template>
 
 <template id="body-F17">
@@ -353,12 +357,12 @@ $ go test       -run TestPoolFixture -count=20 ./internal/generic/   #  0 of 20 
       loc: 'whole module',
     },
     {
-      id: 'F15', severity: 'INFO', state: 'inprogress', evidence: null,
+      id: 'F15', severity: 'INFO', state: 'fixed', evidence: null,
       title: 'Minor inconsistencies and dead weight',
       loc: 'various',
     },
     {
-      id: 'F16', severity: 'INFO', state: 'open', evidence: null,
+      id: 'F16', severity: 'INFO', state: 'fixed', evidence: null,
       title: 'Things checked that are <em>fine</em> (so you don\'t have to re-check)',
       loc: '',
     },
