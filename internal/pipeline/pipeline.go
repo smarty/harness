@@ -6,7 +6,7 @@ import (
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/generic"
-	"github.com/smarty/harness/v2/sqladapter"
+	"github.com/smarty/harness/v2/internal/sqladapter"
 )
 
 func Build(ctx context.Context, config Configuration) (result contracts.Pipeline, err error) {
