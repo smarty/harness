@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal — Route the Writer through storage.DB (legacy hook on the Mapper)</title>
+<style>
+  :root {
+    --ink: #1c2230; --muted: #5b6675; --line: #d9dee7; --bg: #f7f8fb;
+    --accent: #2f6f4f; --accent2: #b4541a; --warn: #8a6d1a; --code-bg: #1f2430;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--ink); background: var(--bg); margin: 0; padding: 0 0 6rem;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 0 1.5rem; }
+  header.page {
+    background: linear-gradient(135deg, #20313f, #2f6f4f); color: #fff;
+    padding: 2.4rem 0 2rem; margin-bottom: 2rem;
+  }
+  header.page .wrap { padding-top: 0; }
+  header.page h1 { margin: 0 0 .4rem; font-size: 1.85rem; letter-spacing: -.01em; }
+  header.page .sub { opacity: .9; font-size: 1rem; }
+  header.page .meta { margin-top: 1rem; font-size: .82rem; opacity: .85; }
+  header.page code { background: rgba(255,255,255,.18); color:#fff; }
+  h2 {
+    margin: 2.6rem 0 .8rem; font-size: 1.3rem; letter-spacing: -.01em;
+    border-bottom: 2px solid var(--line); padding-bottom: .35rem;
+  }
+  h3 { margin: 1.8rem 0 .5rem; font-size: 1.05rem; color: var(--accent); }
+  p { margin: .7rem 0; }
+  code {
+    font: 13.5px/1.5 "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    background: #eceff4; padding: .1em .35em; border-radius: 4px;
+  }
+  pre {
+    background: var(--code-bg); color: #e6e9ef; padding: 1rem 1.2rem; border-radius: 8px;
+    overflow-x: auto; font: 13px/1.55 "SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    margin: .9rem 0;
+  }
+  pre code { background: none; padding: 0; color: inherit; }
+  .tok-key { color: #c792ea; } .tok-str { color: #c3e88d; } .tok-com { color: #7f8a9c; font-style: italic; }
+  .tok-typ { color: #82aaff; } .tok-fn { color: #ffcb6b; }
+  .callout {
+    border-left: 4px solid var(--accent); background: #eef5f0; padding: .9rem 1.1rem;
+    border-radius: 0 8px 8px 0; margin: 1.2rem 0;
+  }
+  .callout.warn { border-color: var(--warn); background: #faf5e6; }
+  .callout .lbl { font-weight: 700; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em;
+    display: block; margin-bottom: .3rem; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .9rem; }
+  th, td { border: 1px solid var(--line); padding: .5rem .65rem; text-align: left; vertical-align: top; }
+  th { background: #edf1f7; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .diagram {
+    background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 1.2rem;
+    font: 12.5px/1.4 "SF Mono", Menlo, monospace; white-space: pre; overflow-x: auto; color: var(--ink);
+  }
+  ul.check { list-style: none; padding-left: 0; }
+  ul.check li { position: relative; padding-left: 1.7rem; margin: .35rem 0; }
+  ul.check li::before { content: "☐"; position: absolute; left: 0; color: var(--accent); font-size: 1.05rem; }
+  ul.check li.done::before { content: "☑"; }
+  ul.check li.done { color: var(--muted); }
+  .phase {
+    background: #fff; border: 1px solid var(--line); border-radius: 10px;
+    padding: 1rem 1.3rem; margin: 1rem 0;
+  }
+  .phase h3 { margin-top: .2rem; }
+  .pill { display:inline-block; font-size:.68rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+    padding:.12em .5em; border-radius:99px; vertical-align:middle; margin-left:.4rem; }
+  .pill.red { background:#fde3e0; color:#a23a28; } .pill.green { background:#e1f0e6; color:#2f6f4f; }
+  .legend { font-size: .8rem; color: var(--muted); }
+  .strike { color: var(--muted); text-decoration: line-through; }
+</style>
+</head>
+<body>
+<header class="page">
+  <div class="wrap">
+    <h1>Route the <code>sqladapter.Writer</code> through <code>storage.DB</code></h1>
+    <div class="sub">The Mapper owns the transaction <em>and</em> the deprecated <code>legacyWrite</code> hook — so <code>*sql.Tx</code> never crosses the storage boundary, and there is nothing to abstract.</div>
+    <div class="meta">
+      Proposal · 2026-06-16 13:43:16 · revised · branch <code>master</code> · author Michael Whatcott<br>
+      Status: <strong>DRAFT — awaiting review. No code to be written until approved.</strong>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<h2>Background</h2>
+<p>
+We are converging every <code>sqladapter</code> type onto a single seam: <code>storage.DB</code>
+(<code>Handle(ctx, operation any) error</code>), implemented by <code>mysql.Mapper</code>. The
+<code>Dispatcher</code> already routes through it via <code>storage.MarkMessagesDispatched</code>, and the
+<code>Recovery</code> type is a straightforward follow-on. The <strong>Writer is the hard case</strong>, and it is
+the subject of this proposal.
+</p>
+<p>
+The Writer is the only type that opens an explicit transaction. Reading what is actually inside that transaction
+(<code>writer.go:83–93</code>) is the key to the whole plan:
+</p>
+<div class="diagram">tx := handle.BeginTx(...)
+    INSERT INTO Messages (...) VALUES (...), (...), ...   ← derives IDs from this one Result
+    legacyWrite(ctx, tx, values...)                       ← deprecated, caller-supplied, *needs the tx*
+tx.Commit()                                               ← (Rollback on error / panic)</div>
+
+<div class="callout">
+  <span class="lbl">Core insight</span>
+  The transaction does <strong>not</strong> exist for the INSERT. ID derivation reads
+  <code>RowsAffected()</code> and <code>LastInsertId()</code> off the <em>same</em> <code>sql.Result</code> the
+  INSERT returns — there is no second statement and therefore no cross-statement state to protect. The transaction
+  exists for <strong>one reason only</strong>: to make the <code>legacyWrite</code> hook atomic with the INSERT.
+  Remove the hook and the transaction has nothing left to wrap.
+</div>
+
+<p>
+We confirmed we <strong>cannot retire <code>legacyWrite</code> yet</strong> (migration of downstream callers is
+incomplete). So the obstacle is not "the transaction"; it is specifically the hook's signature,
+<code>func(ctx, *sql.Tx, …any)</code>, which hands callers a raw <code>*sql.Tx</code>.
+</p>
+
+<div class="callout warn">
+  <span class="lbl">The realization that simplifies everything</span>
+  The hook is inherently <code>*sql.Tx</code>-coupled <em>and</em> MySQL-specific. Its natural home is therefore the
+  MySQL reference adapter — <code>mysql.Mapper</code> — which already imports <code>database/sql</code> and already
+  owns the real transaction. If the hook lives there, <code>*sql.Tx</code> never has to cross the <code>storage</code>
+  boundary at all, so <strong>there is nothing to abstract</strong>: no executor interface, no bridge, no type
+  assertion. An earlier draft threaded the hook through the operation behind a <code>storage.Execer</code> shim;
+  that machinery is deleted in this revision.
+</div>
+
+<h2>Approach</h2>
+<p>Three changes, each smaller than the last. The transaction and the hook both migrate into the Mapper as private
+implementation details; <code>storage</code> stays purely data; the Writer becomes a one-line shim.</p>
+
+<h3>1 — A pure-data storage operation</h3>
+<p>
+<code>storage.InsertMessages</code> carries only the batch. No callback, no <code>database/sql</code> import — the
+<code>storage</code> package remains fully driver-agnostic, exactly like <code>MarkMessagesDispatched</code>.
+</p>
+<pre><code><span class="tok-com">// internal/storage/operations.go</span>
+<span class="tok-key">type</span> <span class="tok-typ">InsertMessages</span> <span class="tok-key">struct</span> {
+    Messages []*contracts.<span class="tok-typ">Message</span> <span class="tok-com">// Mapper assigns IDs back onto these pointers</span>
+}</code></pre>
+
+<h3>2 — The Mapper owns the transaction <em>and</em> the hook (chainable setter)</h3>
+<p>
+The deprecated hook is registered through a chainable setter, keeping it off the primary constructor so the mainline
+is already in its post-deprecation end-state. <code>stride</code> moves here too — it must match the server's
+<code>auto_increment_increment</code>, so it is database-topology configuration that belongs with the type that owns
+the connection.
+</p>
+<pre><code><span class="tok-com">// internal/storage/mysql/mapper.go</span>
+<span class="tok-key">type</span> <span class="tok-typ">Mapper</span> <span class="tok-key">struct</span> {
+    handle      *sql.<span class="tok-typ">DB</span>
+    stride      <span class="tok-typ">uint64</span>
+    statements  *generic.<span class="tok-typ">PoolT</span>[*statement]
+    legacyWrite <span class="tok-key">func</span>(context.<span class="tok-typ">Context</span>, *sql.<span class="tok-typ">Tx</span>, ...<span class="tok-key">any</span>) <span class="tok-com">// Deprecated; never nil — no-op default</span>
+}
+
+<span class="tok-key">func</span> <span class="tok-fn">NewMapper</span>(handle *sql.<span class="tok-typ">DB</span>, stride <span class="tok-typ">uint64</span>) *<span class="tok-typ">Mapper</span> {
+    <span class="tok-key">return</span> &<span class="tok-typ">Mapper</span>{
+        handle:      handle,
+        stride:      cmp.<span class="tok-fn">Or</span>(stride, <span class="tok-str">1</span>),
+        statements:  generic.<span class="tok-fn">NewPoolT</span>(newStatement),
+        legacyWrite: <span class="tok-key">func</span>(context.<span class="tok-typ">Context</span>, *sql.<span class="tok-typ">Tx</span>, ...<span class="tok-key">any</span>) {}, <span class="tok-com">// no-op until overridden</span>
+    }
+}
+
+<span class="tok-com">// Deprecated: WithLegacyWrite registers the transitional hook run inside the same</span>
+<span class="tok-com">// transaction as the INSERT, and returns the Mapper for chaining. Retained only</span>
+<span class="tok-com">// for migration; omit it for new callers.</span>
+<span class="tok-key">func</span> (this *<span class="tok-typ">Mapper</span>) <span class="tok-fn">WithLegacyWrite</span>(fn <span class="tok-key">func</span>(context.<span class="tok-typ">Context</span>, *sql.<span class="tok-typ">Tx</span>, ...<span class="tok-key">any</span>)) *<span class="tok-typ">Mapper</span> {
+    this.legacyWrite = fn
+    <span class="tok-key">return</span> this
+}
+
+<span class="tok-com">// usage:  mapper := mysql.NewMapper(handle, stride).WithLegacyWrite(hook)</span></code></pre>
+<p>
+A new <code>case *storage.InsertMessages</code> in <code>Handle</code> absorbs the INSERT, the ID derivation
+(<code>assignIDs</code>, <code>errRowsAffected</code>, <code>errIdentityFailure</code>), and the transaction with its
+panic-to-rollback discipline. The hook is <strong>always invoked</strong> — a no-op by default — so there is no
+per-call nil-check and exactly one code path. This matches the current Writer, which already opens a transaction on
+every batch.
+</p>
+<pre><code><span class="tok-key">func</span> (this *<span class="tok-typ">Mapper</span>) <span class="tok-fn">insertMessages</span>(ctx context.<span class="tok-typ">Context</span>, op *storage.<span class="tok-typ">InsertMessages</span>) (err <span class="tok-typ">error</span>) {
+    tx, err := this.handle.<span class="tok-fn">BeginTx</span>(ctx, <span class="tok-key">nil</span>)
+    <span class="tok-key">if</span> err != <span class="tok-key">nil</span> { <span class="tok-key">return</span> err }
+    <span class="tok-key">defer</span> <span class="tok-key">func</span>() {                          <span class="tok-com">// preserves the Writer's panic⇒rollback contract</span>
+        <span class="tok-key">if</span> r := <span class="tok-fn">recover</span>(); r != <span class="tok-key">nil</span> { _ = tx.<span class="tok-fn">Rollback</span>(); err = fmt.<span class="tok-fn">Errorf</span>(<span class="tok-str">"panic during write: %v"</span>, r) }
+        <span class="tok-key">else</span> <span class="tok-key">if</span> err != <span class="tok-key">nil</span> { _ = tx.<span class="tok-fn">Rollback</span>() }
+    }()
+    <span class="tok-key">if</span> err := this.<span class="tok-fn">insert</span>(ctx, tx, op.Messages); err != <span class="tok-key">nil</span> { <span class="tok-key">return</span> err }
+    this.<span class="tok-fn">legacyWrite</span>(ctx, tx, <span class="tok-fn">values</span>(op.Messages)...) <span class="tok-com">// always called; no-op by default</span>
+    <span class="tok-key">return</span> tx.<span class="tok-fn">Commit</span>()
+}</code></pre>
+<p class="legend">
+<code>insert(ctx, tx, messages)</code> runs the multi-row INSERT and ID derivation against the transaction.
+<code>values(messages)</code> projects each <code>message.Value</code> into the <code>...any</code> the hook expects.
+Because every batch now runs in a transaction, no shared executor abstraction is needed.
+</p>
+
+<h3>3 — The Writer becomes a one-line shim</h3>
+<p>
+The Writer stops touching <code>*sql.DB</code>, <code>stride</code>, transactions, and the hook entirely. It builds
+the operation and hands it to <code>storage.DB</code> — nothing else.
+</p>
+<pre><code><span class="tok-key">type</span> <span class="tok-typ">Writer</span> <span class="tok-key">struct</span> { db storage.<span class="tok-typ">DB</span> }
+
+<span class="tok-key">func</span> <span class="tok-fn">NewWriter</span>(db storage.<span class="tok-typ">DB</span>) *<span class="tok-typ">Writer</span> { <span class="tok-key">return</span> &<span class="tok-typ">Writer</span>{db: db} }
+
+<span class="tok-key">func</span> (this *<span class="tok-typ">Writer</span>) <span class="tok-fn">Write</span>(ctx context.<span class="tok-typ">Context</span>, messages ...*contracts.<span class="tok-typ">Message</span>) <span class="tok-typ">error</span> {
+    <span class="tok-key">if</span> <span class="tok-fn">len</span>(messages) == <span class="tok-str">0</span> { <span class="tok-key">return</span> <span class="tok-key">nil</span> }
+    <span class="tok-key">return</span> this.db.<span class="tok-fn">Handle</span>(ctx, &storage.<span class="tok-typ">InsertMessages</span>{Messages: messages})
+}</code></pre>
+
+<h3>Data flow</h3>
+<div class="diagram">  sqladapter (thin shim)          │  storage (pure data)         │  mysql (owns DB + tx + hook)
+ ────────────────────────────────│ ─────────────────────────────│ ──────────────────────────────────
+  Writer.Write(messages)         │                              │
+     db.Handle(ctx, op) ─────────┼─►  InsertMessages{Messages} ─┼─►  Mapper.insertMessages
+                                 │                              │       BeginTx
+                                 │                              │       INSERT → assignIDs
+                                 │                              │       legacyWrite(ctx, tx, values…)  ← no-op by default
+                                 │                              │       Commit / Rollback-on-panic
+                  no *sql.Tx here              no database/sql here        *sql.Tx CONTAINED here ↑</div>
+
+<h2>Trade-offs &amp; open questions</h2>
+<table>
+  <tr><th>Concern</th><th>Assessment</th></tr>
+  <tr>
+    <td>The Mapper now carries a deprecated, insert-only concern</td>
+    <td>Mitigated by the chainable <code>WithLegacyWrite</code> setter: it is opt-in and clearly
+      <code>Deprecated:</code>, so the primary <code>NewMapper(handle, stride)</code> path is already in its
+      end-state. When the hook is finally removed, delete <code>WithLegacyWrite</code>, the <code>legacyWrite</code>
+      field, and the Mapper's transaction branch — the plain INSERT remains. Nothing in <code>storage</code> changes,
+      because nothing legacy ever lived there.</td>
+  </tr>
+  <tr>
+    <td>Value derivation (<code>message.Value</code>) lands in the Mapper</td>
+    <td>The hook's <code>...any</code> are the message <code>Value</code>s; with the hook on the Mapper, the Mapper
+      projects them from <code>op.Messages</code>. That is a sliver of "legacy receives the Values" knowledge in the
+      MySQL adapter — acceptable, since the adapter is the hook's owner. (Rejected alternative: a redundant
+      <code>Values []any</code> field on the operation, which would pollute the op with a legacy-only field.)</td>
+  </tr>
+  <tr>
+    <td>Always-tx with a no-op hook default</td>
+    <td>The hook defaults to a no-op and is always called, so there is no per-call nil-check and exactly one code
+      path (this also lets us drop the shared executor abstraction). The cost: every batch opens a transaction even
+      when no legacy work runs — but the current Writer already does so, so it is not a regression. The
+      no-transaction fast path for new callers is deferred until <code>legacyWrite</code> is removed (see
+      <em>Out of scope</em>).</td>
+  </tr>
+  <tr>
+    <td>Public API change</td>
+    <td><code>NewWriter(handle, stride, legacy)</code> → <code>NewWriter(db storage.DB)</code>;
+      <code>NewMapper(handle)</code> → <code>NewMapper(handle, stride)</code>, with the deprecated hook chained on via
+      <code>.WithLegacyWrite(...)</code>. The hook now configures the <strong>Mapper</strong>, not the Writer. <code>sqladapter</code> is the reference adapter
+      ("copy and adapt"); external callers rewire construction. Documented in both package docs.</td>
+  </tr>
+</table>
+
+<h2>Test reorganization</h2>
+<p>This mirrors the Dispatcher refactor: thin adapter → fake-DB unit test; SQL/transaction behavior → Mapper
+integration test. Note the Writer is now <em>fully</em> fake-DB testable — there is no <code>*sql.Tx</code> path left
+in <code>sqladapter</code> to integration-test.</p>
+<table>
+  <tr><th>Test today (<code>sqladapter</code>)</th><th>Destination</th><th>Form</th></tr>
+  <tr><td><code>AssignIDsFixture</code> (pure ID math + guards)</td><td><code>mysql</code> package</td><td>Fast unit (<code>NewMapper(nil, stride)</code>, no DB)</td></tr>
+  <tr><td><code>WriterFixture</code>: insert, autoincrement, legacy-in-tx, panic-rollback, concurrent</td><td><code>mysql</code> package (<code>InsertMessages</code> against real MySQL; legacy tests use <code>WithLegacyWrite</code>)</td><td>Integration (<code>-short</code> skip)</td></tr>
+  <tr><td><code>WriterFixture</code>: no-op, "hands the DB the right operation"</td><td><code>sqladapter</code> (fake <code>storage.DB</code>)</td><td>Fast unit (no DB at all)</td></tr>
+</table>
+
+<h2>Implementation checklist</h2>
+
+<div class="phase">
+  <h3>Phase 1 — Storage operation</h3>
+  <ul class="check">
+    <li class="done">Add <code>InsertMessages{Messages}</code> to <code>internal/storage/operations.go</code> (pure data; no new imports).</li>
+    <li class="done"><code>go build ./...</code> — confirm <code>storage</code> still imports no <code>database/sql</code>.</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h3>Phase 2 — Mapper handles <code>InsertMessages</code> <span class="pill red">red</span> → <span class="pill green">green</span></h3>
+  <ul class="check">
+    <li class="done"><span class="pill red">red</span> Port the <code>AssignIDsFixture</code> tests into the <code>mysql</code> package as <code>TestAssignIDsFixture</code>, driving a <code>Mapper.assignIDs</code> method via <code>NewMapper(nil, stride)</code>. Run — fails to compile (no <code>assignIDs</code>; <code>NewMapper</code> arity).</li>
+    <li class="done"><span class="pill green">green</span> Add <code>stride</code> to <code>NewMapper</code> (with <code>cmp.Or(stride, 1)</code>, defaulting <code>legacyWrite</code> to a no-op) and the chainable <code>WithLegacyWrite</code> setter; port <code>assignIDs</code>, <code>errRowsAffected</code>, <code>errIdentityFailure</code> onto the Mapper. Run — pure tests pass.</li>
+    <li class="done"><span class="pill red">red</span> Add <code>MapperFixture</code> integration tests for <code>InsertMessages</code>: row inserted &amp; IDs strided; multi-row; no-op on empty; with <code>WithLegacyWrite</code>, the hook receives the message <code>Value</code>s and a usable <code>*sql.Tx</code>, and its writes commit; a hook panic rolls back the INSERT; concurrent inserts produce a collision-free ID partition (port <code>TestConcurrentWriters…</code> to concurrent Mappers). Run — fails (no <code>InsertMessages</code> case).</li>
+    <li class="done"><span class="pill green">green</span> Add <code>case *storage.InsertMessages</code> to <code>Handle</code>; implement <code>insertMessages</code> (always tx + panic-recovery, always calling <code>legacyWrite</code>), the <code>insert(ctx, tx, messages)</code> helper, and <code>values(messages)</code>. Run — integration tests pass.</li>
+    <li class="done">Update the existing <code>MapperFixture.Setup</code> to the new <code>NewMapper(handle, stride)</code> signature. <em>(Done early in Phase 2 as a compile prerequisite; also added a dynamic <code>auto_increment_increment</code> stride helper.)</em></li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h3>Phase 3 — Writer delegates to <code>storage.DB</code> <span class="pill red">red</span> → <span class="pill green">green</span></h3>
+  <ul class="check">
+    <li class="done"><span class="pill red">red</span> Rewrite <code>sqladapter/writer_test.go</code> to a fake-<code>storage.DB</code> <code>WriterFixture</code> (no DB): empty no-op; <code>Write</code> hands the DB an <code>InsertMessages</code> carrying exactly the messages passed. Run — fails to compile (<code>NewWriter</code> still takes <code>*sql.DB</code>).</li>
+    <li class="done"><span class="pill green">green</span> Rewrite the Writer to hold <code>storage.DB</code> and delegate; drop the buffers, handle, stride, <code>legacyWrite</code>, <code>insertMessages</code>, and <code>assignIDs</code>. <code>NewWriter(db storage.DB)</code>. Run — fake-DB unit tests pass.</li>
+    <li class="done">Update the Writer package doc: new construction, and that the deprecated hook now configures the Mapper.</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h3>Phase 4 — Wire-up &amp; verification</h3>
+  <ul class="check">
+    <li class="done">Update any remaining construction sites; confirm the <code>internal/storage/mysql</code> entry in the <code>test.db</code> target runs both the <code>InsertMessages</code> integration tests and the pure <code>assignIDs</code> tests. <em>(No production callers to rewire — all are definitions; reference adapter is wired externally.)</em></li>
+    <li class="done"><code>make test</code> — fast suites green (fake-DB unit tests + pure <code>assignIDs</code>).</li>
+    <li class="done"><code>make test.db</code> — full suite green against the running MySQL. <em>mysql coverage is 97.0%: the only uncovered branches are <code>insert</code>'s <code>result.RowsAffected()</code> / <code>result.LastInsertId()</code> error checks, which are driver-internal and not practically triggerable against real MySQL without a mock driver (the <code>BeginTx</code> and <code>ExecContext</code> error paths and rollback are covered). Accepted as the stopping point.</em></li>
+    <li class="done"><code>go vet ./...</code> clean and a final read against the "critical invariants" in <code>CLAUDE.md</code> (context honored; pooled-message consumption; single-goroutine driving). <em>Follow-up: the Mapper's "safe for concurrent use" doc is now slightly optimistic — the pooled statement buffers are safe, but the new instance-level <code>legacyWrites</code> buffer is touched only by <code>insertMessages</code>; safe in the intended one-goroutine-per-stage wiring, but consider moving it onto the pooled <code>statement</code> to keep the broad concurrency guarantee.</em></li>
+  </ul>
+</div>
+
+<h2>Out of scope</h2>
+<p>
+The <code>Recovery</code> type's migration onto <code>storage.DB</code> is a natural sequel but is not part of this
+proposal. Removing <code>legacyWrite</code> outright (and with it <code>WithLegacyWrite</code>, the Mapper's
+<code>legacyWrite</code> field, the no-op default, and its always-on transaction) is the eventual cleanup this design
+is shaped to make trivial — at which point the INSERT can drop to a single transaction-free statement. Also out of
+scope here.
+</p>
+
+</div>
+</body>
+</html>

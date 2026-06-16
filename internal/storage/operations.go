@@ -11,3 +11,7 @@ var ErrUnsupportedOperation = errors.New("harness: unsupported storage operation
 type MarkMessagesDispatched struct {
 	Messages []*contracts.Message
 }
+
+type InsertMessages struct {
+	Messages []*contracts.Message
+}
