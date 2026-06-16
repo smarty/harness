@@ -6,44 +6,30 @@
 package sqladapter
 
 import (
-	"bytes"
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
 
 	"github.com/smarty/harness/v2/contracts"
-	"github.com/smarty/harness/v2/internal/generic"
+	"github.com/smarty/harness/v2/internal/storage"
 )
 
-// Steady-state capacities retained for the Dispatcher's reused buffers; a
-// pathologically large batch has its oversized backing arrays discarded on the
-// next call rather than pinned for the life of the process (see generic.Reclaim).
-const (
-	dispatcherArgsCapacity      = 512
-	dispatcherStatementCapacity = 1024 * 8
-)
-
-// Dispatcher reuses instance-level statement and argument buffers across calls
-// and is therefore not safe for concurrent use; it must be driven from a single
-// goroutine (as the pipeline does). Sharing one Dispatcher across goroutines
-// yields interleaved SQL.
+// Dispatcher publishes a batch through its inner dispatcher and then asks the
+// storage.DB to mark the batch dispatched. It holds no reused buffers of its
+// own (the statement bookkeeping now lives behind storage.DB), but its inner
+// dispatcher and DB are not assumed safe for concurrent use, so a Dispatcher
+// must be driven from a single goroutine (as the pipeline does).
 type Dispatcher struct {
-	inner     contracts.Dispatcher
-	handle    *sql.DB
-	args      []any
-	statement *bytes.Buffer
+	inner contracts.Dispatcher
+	db    storage.DB
 }
 
 // NewDispatcher builds a dispatcher. The inner dispatcher is the caller's
 // opportunity to provide an adapter layer to convert between our *contracts.Message
 // to their own preferred dispatch type (perhaps a library for RabbitMQ, or Kafka, etc.).
-func NewDispatcher(inner contracts.Dispatcher, handle *sql.DB) *Dispatcher {
+func NewDispatcher(inner contracts.Dispatcher, db storage.DB) *Dispatcher {
 	return &Dispatcher{
-		inner:     inner,
-		handle:    handle,
-		args:      make([]any, 0, dispatcherArgsCapacity),
-		statement: bytes.NewBuffer(make([]byte, 0, dispatcherStatementCapacity)),
+		inner: inner,
+		db:    db,
 	}
 }
 
@@ -65,27 +51,7 @@ func (this *Dispatcher) Dispatch(ctx context.Context, messages ...*contracts.Mes
 	if err := this.inner.Dispatch(ctx, messages...); err != nil {
 		return err
 	}
-
-	this.args = generic.Reclaim(this.args, dispatcherArgsCapacity)
-	this.statement = generic.ReclaimBuffer(this.statement, dispatcherStatementCapacity)
-	this.statement.WriteString(`UPDATE Messages SET dispatched = NOW(3) WHERE dispatched IS NULL AND id IN (`)
-	for i, message := range messages {
-		if i > 0 {
-			this.statement.WriteString(`,`)
-		}
-		this.statement.WriteString(`?`)
-		this.args = append(this.args, message.ID)
-	}
-	this.statement.WriteString(`)`)
-	// Rows-affected is intentionally not asserted against len(messages): the
-	// `dispatched IS NULL` guard makes redelivery idempotent, so after a crash
-	// between publish and mark, recovery republishes and this UPDATE legitimately
-	// matches fewer rows (or none) because they are already marked. The only
-	// unrecoverable case — an id that can never match — is the ID==0 guard above.
-	if _, err := this.handle.ExecContext(ctx, this.statement.String(), this.args...); err != nil {
-		return fmt.Errorf("mark dispatched: %w", err)
-	}
-	return nil
+	return this.db.Handle(ctx, &storage.MarkMessagesDispatched{Messages: messages})
 }
 
 var errUnassignedID = errors.New("cannot mark a message dispatched: message has no assigned id (id=0); the Writer must assign positive ids")
