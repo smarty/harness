@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal — Route Recovery's SQL through storage.DB</title>
+<style>
+  :root {
+    --ink: #1c2230; --muted: #5b6675; --line: #d9dee7; --bg: #f7f8fb;
+    --accent: #2f6f4f; --accent2: #b4541a; --warn: #8a6d1a; --code-bg: #1f2430;
+  }
+  * { box-sizing: border-box; }
+  body { font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--ink); background: var(--bg); margin: 0; padding: 0 0 6rem; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 0 1.5rem; }
+  header.page { background: linear-gradient(135deg, #20313f, #2f6f4f); color: #fff; padding: 2.4rem 0 2rem; margin-bottom: 2rem; }
+  header.page .wrap { padding-top: 0; }
+  header.page h1 { margin: 0 0 .4rem; font-size: 1.8rem; letter-spacing: -.01em; }
+  header.page .sub { opacity: .92; font-size: 1rem; }
+  header.page .meta { margin-top: 1rem; font-size: .82rem; opacity: .85; }
+  header.page code { background: rgba(255,255,255,.18); color:#fff; }
+  h2 { margin: 2.6rem 0 .8rem; font-size: 1.3rem; letter-spacing: -.01em; border-bottom: 2px solid var(--line); padding-bottom: .35rem; }
+  h3 { margin: 1.8rem 0 .5rem; font-size: 1.05rem; color: var(--accent); }
+  p { margin: .7rem 0; }
+  code { font: 13.5px/1.5 "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; background: #eceff4; padding: .1em .35em; border-radius: 4px; }
+  pre { background: var(--code-bg); color: #e6e9ef; padding: 1rem 1.2rem; border-radius: 8px; overflow-x: auto;
+    font: 13px/1.55 "SF Mono","JetBrains Mono",Menlo,Consolas,monospace; margin: .9rem 0; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .tok-key { color: #c792ea; } .tok-str { color: #c3e88d; } .tok-com { color: #7f8a9c; font-style: italic; }
+  .tok-typ { color: #82aaff; } .tok-fn { color: #ffcb6b; }
+  .callout { border-left: 4px solid var(--accent); background: #eef5f0; padding: .9rem 1.1rem; border-radius: 0 8px 8px 0; margin: 1.2rem 0; }
+  .callout.warn { border-color: var(--warn); background: #faf5e6; }
+  .callout .lbl { font-weight: 700; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; display: block; margin-bottom: .3rem; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .9rem; }
+  th, td { border: 1px solid var(--line); padding: .5rem .65rem; text-align: left; vertical-align: top; }
+  th { background: #edf1f7; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .diagram { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 1.2rem;
+    font: 12.5px/1.4 "SF Mono", Menlo, monospace; white-space: pre; overflow-x: auto; color: var(--ink); }
+  ul.check { list-style: none; padding-left: 0; }
+  ul.check li { position: relative; padding-left: 1.7rem; margin: .35rem 0; }
+  ul.check li::before { content: "☐"; position: absolute; left: 0; color: var(--accent); font-size: 1.05rem; }
+  ul.check li.done::before { content: "☑"; }
+  ul.check li.done { color: var(--muted); }
+  .phase { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.3rem; margin: 1rem 0; }
+  .phase h3 { margin-top: .2rem; }
+  .pill { display:inline-block; font-size:.68rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; padding:.12em .5em; border-radius:99px; vertical-align:middle; margin-left:.4rem; }
+  .pill.red { background:#fde3e0; color:#a23a28; } .pill.green { background:#e1f0e6; color:#2f6f4f; }
+  .legend { font-size: .8rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<header class="page">
+  <div class="wrap">
+    <h1>Route <code>Recovery</code>'s SQL through <code>storage.DB</code></h1>
+    <div class="sub">All cursor state and paging logic stay in <code>Recovery</code>; only the two SQL queries move to <code>storage</code> + <code>mysql.Mapper</code>. No <code>*sql.DB</code> / <code>*sql.Rows</code> crosses the storage contract.</div>
+    <div class="meta">
+      Proposal · 2026-06-16 14:46:07 · branch <code>master</code> · author Michael Whatcott<br>
+      Status: <strong>DRAFT — awaiting review. No code to be written until approved.</strong>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<h2>Background</h2>
+<p>
+<code>Dispatcher</code> and <code>Writer</code> now route their database work through the <code>storage.DB</code> seam
+(<code>Handle(ctx, operation any) error</code>), implemented by <code>mysql.Mapper</code>. <code>Recovery</code> is the
+last <code>sqladapter</code> type still holding a <code>*sql.DB</code> and composing raw SQL. This proposal moves its
+two queries behind the same seam.
+</p>
+<p>
+<code>Recovery</code> is different from the other two: it is a <strong>stateful keyset cursor</strong>, not a thin
+shim. Per your direction, <strong>all of that state and logic stays put</strong> — only the SQL leaves. Today
+(<code>recovery.go</code>) it owns:
+</p>
+<ul>
+  <li><code>cursor</code>, <code>boundary</code>, <code>snapshotted</code> — the paging state.</li>
+  <li><strong>snapshot-once</strong>: on the first <code>Recover</code> it freezes the backlog's id bounds (MIN/MAX of undispatched rows that predate startup).</li>
+  <li><strong>completion</strong>: <code>cursor &gt;= boundary</code> ⇒ return the empty page (backlog exhausted).</li>
+  <li><strong>advance-only-after-a-clean-scan</strong>: the cursor moves to the last returned id only when a page comes back non-empty and error-free, so a failed page is re-served, never skipped.</li>
+</ul>
+<p>Exactly two things are SQL, and only these move:</p>
+<div class="diagram">snapshot:  SELECT MIN(id), MAX(id) FROM Messages WHERE dispatched IS NULL
+page:      SELECT id, type, payload FROM Messages
+             WHERE dispatched IS NULL AND id &gt; ? AND id &lt;= ?
+             ORDER BY id LIMIT ?</div>
+
+<h2>Approach</h2>
+
+<h3>1 — Two result-bearing storage operations</h3>
+<p>
+These are the first operations that carry <em>output</em> back to the caller. The mechanism is the one already in
+use (the Mapper mutates fields of the operation the caller passes by pointer — as <code>InsertMessages</code> does
+with assigned IDs); here the mutated fields are query results. Neither type imports <code>database/sql</code>, so
+the <code>storage</code> package stays driver-agnostic.
+</p>
+<pre><code><span class="tok-com">// internal/storage/operations.go</span>
+
+<span class="tok-com">// LoadUndispatchedBounds reports the id range of the undispatched backlog.</span>
+<span class="tok-key">type</span> <span class="tok-typ">LoadUndispatchedBounds</span> <span class="tok-key">struct</span> {
+    Found <span class="tok-typ">bool</span>   <span class="tok-com">// false when the backlog is empty (both bounds NULL)</span>
+    Min   <span class="tok-typ">uint64</span> <span class="tok-com">// populated by the handler</span>
+    Max   <span class="tok-typ">uint64</span>
+}
+
+<span class="tok-com">// LoadUndispatchedPage loads up to Limit undispatched messages in id order</span>
+<span class="tok-com">// within the half-open window (AfterID, ThroughID].</span>
+<span class="tok-key">type</span> <span class="tok-typ">LoadUndispatchedPage</span> <span class="tok-key">struct</span> {
+    AfterID   <span class="tok-typ">uint64</span>                 <span class="tok-com">// exclusive lower bound (the cursor)</span>
+    ThroughID <span class="tok-typ">uint64</span>                 <span class="tok-com">// inclusive upper bound (the frozen boundary)</span>
+    Limit     <span class="tok-typ">int</span>
+    Messages  []*contracts.<span class="tok-typ">Message</span> <span class="tok-com">// populated by the handler</span>
+}</code></pre>
+
+<h3>2 — The Mapper handles the queries</h3>
+<p>
+Two new cases in <code>Handle</code>. All driver detail — <code>QueryRowContext</code>/<code>QueryContext</code>,
+<code>sql.NullInt64</code>, <code>*sql.Rows</code>, the <code>bytes.Buffer</code> payloads, and the hard-coded
+<code>application/json</code> content type — lives here, in the package that already owns <code>database/sql</code>.
+</p>
+<pre><code><span class="tok-key">case</span> *storage.<span class="tok-typ">LoadUndispatchedBounds</span>:
+    <span class="tok-key">return</span> this.<span class="tok-fn">loadUndispatchedBounds</span>(ctx, op)
+<span class="tok-key">case</span> *storage.<span class="tok-typ">LoadUndispatchedPage</span>:
+    <span class="tok-key">return</span> this.<span class="tok-fn">loadUndispatchedPage</span>(ctx, op)</code></pre>
+<pre><code><span class="tok-key">func</span> (this *<span class="tok-typ">Mapper</span>) <span class="tok-fn">loadUndispatchedBounds</span>(ctx context.<span class="tok-typ">Context</span>, op *storage.<span class="tok-typ">LoadUndispatchedBounds</span>) <span class="tok-typ">error</span> {
+    <span class="tok-key">var</span> lo, hi sql.<span class="tok-typ">NullInt64</span>
+    row := this.handle.<span class="tok-fn">QueryRowContext</span>(ctx, <span class="tok-str">`SELECT MIN(id), MAX(id) FROM Messages WHERE dispatched IS NULL`</span>)
+    <span class="tok-key">if</span> err := row.<span class="tok-fn">Scan</span>(&lo, &hi); err != <span class="tok-key">nil</span> { <span class="tok-key">return</span> err }
+    <span class="tok-key">if</span> lo.Valid && hi.Valid {
+        op.Found, op.Min, op.Max = <span class="tok-key">true</span>, <span class="tok-typ">uint64</span>(lo.Int64), <span class="tok-typ">uint64</span>(hi.Int64)
+    }
+    <span class="tok-key">return</span> <span class="tok-key">nil</span>
+}
+
+<span class="tok-key">func</span> (this *<span class="tok-typ">Mapper</span>) <span class="tok-fn">loadUndispatchedPage</span>(ctx context.<span class="tok-typ">Context</span>, op *storage.<span class="tok-typ">LoadUndispatchedPage</span>) <span class="tok-typ">error</span> {
+    rows, err := this.handle.<span class="tok-fn">QueryContext</span>(ctx, <span class="tok-str">`SELECT id, type, payload FROM Messages
+        WHERE dispatched IS NULL AND id &gt; ? AND id &lt;= ? ORDER BY id LIMIT ?`</span>, op.AfterID, op.ThroughID, op.Limit)
+    <span class="tok-key">if</span> err != <span class="tok-key">nil</span> { <span class="tok-key">return</span> err }
+    <span class="tok-key">defer</span> <span class="tok-key">func</span>() { _ = rows.<span class="tok-fn">Close</span>() }()
+    <span class="tok-key">for</span> rows.<span class="tok-fn">Next</span>() {
+        <span class="tok-key">var</span> ( id <span class="tok-typ">uint64</span>; typeName <span class="tok-typ">string</span>; payload []<span class="tok-typ">byte</span> )
+        <span class="tok-key">if</span> err := rows.<span class="tok-fn">Scan</span>(&id, &typeName, &payload); err != <span class="tok-key">nil</span> { <span class="tok-key">return</span> err }
+        op.Messages = <span class="tok-fn">append</span>(op.Messages, &contracts.<span class="tok-typ">Message</span>{
+            ID: id, Type: typeName, Content: bytes.<span class="tok-fn">NewBuffer</span>(payload), ContentType: <span class="tok-str">"application/json"</span>,
+        })
+    }
+    <span class="tok-key">return</span> rows.<span class="tok-fn">Err</span>()  <span class="tok-com">// a mid-scan error returns non-nil; the caller will not advance</span>
+}</code></pre>
+<div class="callout">
+  <span class="lbl">The clean-scan guarantee survives the move</span>
+  The Mapper either fully populates <code>op.Messages</code> and returns <code>nil</code>, or it returns an error
+  (from <code>QueryContext</code>, <code>Scan</code>, or <code>rows.Err()</code>). <code>Recovery</code> advances its
+  cursor only on <code>nil</code>-with-non-empty-page, so a failed scan still leaves the cursor untouched and the
+  page is re-served on retry — identical to today. Each op is freshly allocated per call, so a partially-populated
+  <code>op.Messages</code> on an errored page is simply discarded.
+</div>
+
+<h3>3 — Recovery keeps all state &amp; logic; only the SQL calls become operations</h3>
+<p>
+<code>Recovery</code> swaps <code>*sql.DB</code> for <code>storage.DB</code>. The <code>cursor</code>/<code>boundary</code>/
+<code>snapshotted</code> fields and every branch of the paging logic remain exactly where they are. The two private
+methods stop issuing SQL and instead build an operation, hand it to <code>db.Handle</code>, and read the results
+back off the operation.
+</p>
+<pre><code><span class="tok-key">type</span> <span class="tok-typ">Recovery</span> <span class="tok-key">struct</span> {
+    db          storage.<span class="tok-typ">DB</span>
+    cursor      <span class="tok-typ">uint64</span>
+    boundary    <span class="tok-typ">uint64</span>
+    snapshotted <span class="tok-typ">bool</span>
+}
+
+<span class="tok-key">func</span> <span class="tok-fn">NewRecovery</span>(db storage.<span class="tok-typ">DB</span>) *<span class="tok-typ">Recovery</span> { <span class="tok-key">return</span> &<span class="tok-typ">Recovery</span>{db: db} }
+
+<span class="tok-com">// Recover is UNCHANGED — same snapshot-once / boundary / page sequencing:</span>
+<span class="tok-key">func</span> (this *<span class="tok-typ">Recovery</span>) <span class="tok-fn">Recover</span>(ctx context.<span class="tok-typ">Context</span>, limit <span class="tok-typ">int</span>) ([]*contracts.<span class="tok-typ">Message</span>, <span class="tok-typ">error</span>) {
+    <span class="tok-key">if</span> !this.snapshotted {
+        <span class="tok-key">if</span> err := this.<span class="tok-fn">snapshot</span>(ctx); err != <span class="tok-key">nil</span> { <span class="tok-key">return</span> <span class="tok-key">nil</span>, err }
+    }
+    <span class="tok-key">if</span> this.cursor &gt;= this.boundary { <span class="tok-key">return</span> <span class="tok-key">nil</span>, <span class="tok-key">nil</span> }
+    <span class="tok-key">return</span> this.<span class="tok-fn">page</span>(ctx, limit)
+}</code></pre>
+<p>
+<code>snapshot</code> and <code>page</code> keep the cursor arithmetic (<code>cursor = Min - 1</code>, advance to last
+id) and just read it from the operation instead of from <code>sql.Row</code>/<code>sql.Rows</code>. No buffer
+reuse: recovery is a one-time startup procedure, so each call allocates a fresh operation (the existing code comment
+already declines pooling here).
+</p>
+
+<h3>Data flow</h3>
+<table>
+  <tr>
+    <th style="width:8%">Call</th>
+    <th style="width:32%"><code>sqladapter</code> — Recovery <span class="legend">(state + logic)</span></th>
+    <th style="width:28%"><code>storage</code> — operation <span class="legend">(pure data)</span></th>
+    <th style="width:32%"><code>mysql</code> — Mapper <span class="legend">(owns <code>*sql.DB</code> / <code>*sql.Rows</code>)</span></th>
+  </tr>
+  <tr>
+    <td><code>snapshot</code></td>
+    <td><code>db.Handle(op)</code>, then if <code>op.Found</code>: <code>cursor = op.Min-1</code>, <code>boundary = op.Max</code></td>
+    <td><code>LoadUndispatchedBounds{}</code> → handler fills <code>Found, Min, Max</code></td>
+    <td><code>SELECT MIN(id), MAX(id) … WHERE dispatched IS NULL</code></td>
+  </tr>
+  <tr>
+    <td><code>page</code></td>
+    <td><code>db.Handle(op)</code>, then if non-empty &amp; no error: <code>cursor = last msg id</code></td>
+    <td><code>LoadUndispatchedPage{AfterID, ThroughID, Limit}</code> → handler fills <code>Messages</code></td>
+    <td><code>SELECT id, type, payload … id &gt; ? AND id &lt;= ? ORDER BY id LIMIT ?</code></td>
+  </tr>
+</table>
+<p class="legend">
+Boundary by column: <code>cursor</code>/<code>boundary</code> state never leaves <code>sqladapter</code>;
+<code>storage</code> carries only data (no <code>database/sql</code>); <code>*sql.DB</code>/<code>*sql.Rows</code> never
+leave <code>mysql</code>.
+</p>
+
+<h2>Trade-offs &amp; open questions</h2>
+<table>
+  <tr><th>Concern</th><th>Assessment</th></tr>
+  <tr>
+    <td>Result-bearing operations (output via the op struct)</td>
+    <td>New for these two ops, but the same by-pointer mutation pattern <code>InsertMessages</code> already uses for
+      assigned IDs. The <code>Handle(ctx, op) error</code> signature is unchanged; results ride on the op.</td>
+  </tr>
+  <tr>
+    <td>No end-to-end <code>Recovery</code>+real-DB test</td>
+    <td>By decision: the two queries are proven against real MySQL through the Mapper's integration tests, so the
+      cursor algorithm only needs fast fake-<code>storage.DB</code> unit tests. The <em>boundary-snapshot</em>
+      guarantee is covered as the composition of (a) Recovery snapshotting once + paging within the frozen window
+      (unit-tested) and (b) the page query honoring <code>id &gt; AfterID AND id &lt;= ThroughID</code>
+      (integration-tested). No end-to-end recovery test is added.</td>
+  </tr>
+  <tr>
+    <td>Operation naming</td>
+    <td><code>LoadUndispatchedBounds</code> / <code>LoadUndispatchedPage</code> describe the data, not the recovery
+      domain ("backlog", "snapshot") — keeping the storage vocabulary generic. Easy to rename if you prefer.</td>
+  </tr>
+  <tr>
+    <td><code>NewRecovery</code> signature change</td>
+    <td><code>NewRecovery(*sql.DB)</code> → <code>NewRecovery(storage.DB)</code>. Same public-API migration the
+      Writer/Dispatcher already made; external callers wire a <code>mysql.Mapper</code>.</td>
+  </tr>
+</table>
+
+<h2>Test reorganization</h2>
+<table>
+  <tr><th>Today (<code>sqladapter/recovery_test.go</code>, integration)</th><th>Destination</th><th>Form</th></tr>
+  <tr><td>Undispatched rows in id order; dispatched rows skipped; paging by limit; payload/type/contentType mapping</td><td><code>mysql</code> package (the two query handlers)</td><td>Integration (<code>-short</code> skip)</td></tr>
+  <tr><td>Snapshot-once; <code>cursor&gt;=boundary</code> empty; advance-only-after-clean-scan; failed page re-served; empty backlog completes on first call</td><td><code>sqladapter</code> (fake <code>storage.DB</code>)</td><td>Fast unit (no DB)</td></tr>
+  <tr><td>Boundary snapshot (live rows excluded)</td><td>Split: snapshot-once (unit) + windowed query (integration)</td><td>Both</td></tr>
+</table>
+
+<h2>Implementation checklist</h2>
+
+<div class="phase">
+  <h3>Phase 1 — Storage operations</h3>
+  <ul class="check">
+    <li class="done">Add <code>LoadUndispatchedBounds</code> and <code>LoadUndispatchedPage</code> to <code>internal/storage/operations.go</code> (pure data + result fields; no new imports).</li>
+    <li class="done"><code>go build ./...</code> — confirm <code>storage</code> still imports no <code>database/sql</code>.</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h3>Phase 2 — Mapper handles the queries <span class="pill red">red</span> → <span class="pill green">green</span></h3>
+  <ul class="check">
+    <li class="done"><span class="pill red">red</span> Add Mapper integration tests: <code>LoadUndispatchedBounds</code> on an empty table (<code>Found=false</code>) and with a mix of dispatched/undispatched rows (<code>Min</code>/<code>Max</code> span only the undispatched); <code>LoadUndispatchedPage</code> returns undispatched rows in id order within <code>(AfterID, ThroughID]</code>, respects <code>Limit</code>, excludes dispatched and out-of-window rows, and maps <code>id</code>/<code>type</code>/<code>payload</code>/<code>ContentType</code>. Run — fails (no cases in <code>Handle</code>).</li>
+    <li class="done"><span class="pill green">green</span> Add the two <code>case</code>s and <code>loadUndispatchedBounds</code>/<code>loadUndispatchedPage</code> (move the <code>bytes</code> import and the <code>application/json</code> content-type here). Run — integration tests pass.</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h3>Phase 3 — Recovery delegates to <code>storage.DB</code> <span class="pill red">red</span> → <span class="pill green">green</span></h3>
+  <ul class="check">
+    <li class="done"><span class="pill red">red</span> Rewrite <code>sqladapter/recovery_test.go</code> to fake-<code>storage.DB</code> unit tests of the cursor logic (snapshot-once, boundary completion, advance-after-clean-scan, failed-page re-served, empty backlog, <code>cursor=Min-1</code>, frozen <code>boundary</code> used as <code>ThroughID</code>). Run — fails to compile (<code>NewRecovery</code> still takes <code>*sql.DB</code>).</li>
+    <li class="done"><span class="pill green">green</span> Rewrite <code>Recovery</code> to hold <code>storage.DB</code>; keep <code>cursor</code>/<code>boundary</code>/<code>snapshotted</code> and all logic; reimplement <code>snapshot</code>/<code>page</code> over <code>db.Handle</code> + the new ops (snapshot-once, <code>cursor=op.Min-1</code>/<code>boundary=op.Max</code> only when <code>op.Found</code>; advance to last id only on a non-empty, error-free page). <code>NewRecovery(db storage.DB)</code>. Run — unit tests pass.</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h3>Phase 4 — Wire-up &amp; verification</h3>
+  <ul class="check">
+    <li class="done">Confirm the <code>internal/storage/mysql</code> entry in the <code>test.db</code> target covers the new handler tests.</li>
+    <li class="done"><code>make test</code> — fast suites green (Recovery cursor unit tests).</li>
+    <li class="done"><code>make test.db</code> — full suite green against MySQL.</li>
+    <li class="done"><code>go vet ./...</code> and a final read against the "critical invariants" in <code>CLAUDE.md</code> (Recoverer honors its context; failed page re-served, never skipped).</li>
+  </ul>
+</div>
+
+<h2>Out of scope</h2>
+<p>
+Inlining <code>sqladapter</code> (Writer/Dispatcher/Recovery) into the pipeline stages — the agreed eventual
+direction — is not part of this change. After this, all three adapters route through <code>storage.DB</code>, which
+is the precondition that makes that later inlining mechanical.
+</p>
+
+</div>
+</body>
+</html>

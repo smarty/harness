@@ -1,6 +1,7 @@
 package mysql
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"database/sql"
@@ -49,6 +50,10 @@ func (this *Mapper) Handle(ctx context.Context, operation any) error {
 		return this.markMessagesDispatched(ctx, op)
 	case *storage.InsertMessages:
 		return this.insertMessages(ctx, op)
+	case *storage.LoadUndispatchedBounds:
+		return this.loadUndispatchedBounds(ctx, op)
+	case *storage.LoadUndispatchedPage:
+		return this.loadUndispatchedPage(ctx, op)
 	default:
 		return storage.ErrUnsupportedOperation
 	}
@@ -154,6 +159,47 @@ func (this *Mapper) markMessagesDispatched(ctx context.Context, operation *stora
 		return fmt.Errorf("mark dispatched: %w", err)
 	}
 	return nil
+}
+
+func (this *Mapper) loadUndispatchedBounds(ctx context.Context, operation *storage.LoadUndispatchedBounds) error {
+	var lo, hi sql.NullInt64
+	row := this.handle.QueryRowContext(ctx, `SELECT MIN(id), MAX(id) FROM Messages WHERE dispatched IS NULL`)
+	if err := row.Scan(&lo, &hi); err != nil {
+		return err
+	}
+	if lo.Valid && hi.Valid {
+		operation.Found, operation.Min, operation.Max = true, uint64(lo.Int64), uint64(hi.Int64)
+	}
+	return nil
+}
+
+func (this *Mapper) loadUndispatchedPage(ctx context.Context, operation *storage.LoadUndispatchedPage) error {
+	rows, err := this.handle.QueryContext(ctx, `SELECT id, type, payload FROM Messages
+		WHERE dispatched IS NULL AND id > ? AND id <= ? ORDER BY id LIMIT ?`, operation.AfterID, operation.ThroughID, operation.Limit)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			id       uint64
+			typeName string
+			payload  []byte
+		)
+		if err := rows.Scan(&id, &typeName, &payload); err != nil {
+			return err
+		}
+		operation.Messages = append(operation.Messages, &contracts.Message{
+			ID:      id,
+			Type:    typeName,
+			Content: bytes.NewBuffer(payload),
+			// Hard-coded until the Messages schema gains a content_type column;
+			// all payloads written by Writer are JSON so this is correct for now.
+			ContentType: "application/json",
+		})
+	}
+	// A mid-scan error returns non-nil; Recovery will not advance its cursor.
+	return rows.Err()
 }
 
 var (
