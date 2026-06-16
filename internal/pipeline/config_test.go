@@ -24,10 +24,11 @@ type ValidationFixture struct {
 func (this *ValidationFixture) validConfiguration() Configuration {
 	return Configuration{
 		Monitor:                nopCollaborator{},
-		Recoverer:              nopCollaborator{},
+		Storage:                nopCollaborator{},
 		Serializer:             nopCollaborator{},
-		Writer:                 nopCollaborator{},
 		Dispatcher:             nopCollaborator{},
+		MessageTypes:           nil,
+		DomainTypes:            nil,
 		BurstCapacity:          1024,
 		PipelineBufferCapacity: 4,
 		ExecutionUnitSize:      64,
@@ -199,9 +200,8 @@ func (wellFormedHandler) ExecuteConcrete(_ concreteCommand, _ func(...any)) {}
 
 type nopCollaborator struct{}
 
-func (nopCollaborator) Track(any)                                                  {}
-func (nopCollaborator) Recover(context.Context, int) ([]*contracts.Message, error) { return nil, nil }
-func (nopCollaborator) Serialize(io.Writer, any) error                             { return nil }
-func (nopCollaborator) ContentType() string                                        { return "" }
-func (nopCollaborator) Write(context.Context, ...*contracts.Message) error         { return nil }
-func (nopCollaborator) Dispatch(context.Context, ...*contracts.Message) error      { return nil }
+func (nopCollaborator) Track(any)                                             {}
+func (nopCollaborator) Serialize(io.Writer, any) error                        { return nil }
+func (nopCollaborator) ContentType() string                                   { return "" }
+func (nopCollaborator) Dispatch(context.Context, ...*contracts.Message) error { return nil }
+func (nopCollaborator) Handle(ctx context.Context, operation any) error       { return nil }

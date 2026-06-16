@@ -19,14 +19,14 @@ import (
 // must be driven from a single goroutine (as the pipeline does).
 type Dispatcher struct {
 	inner contracts.Dispatcher
-	db    storage.DB
+	db    contracts.DB
 	op    *storage.MarkMessagesDispatched
 }
 
 // NewDispatcher builds a dispatcher. The inner dispatcher is the caller's
 // opportunity to provide an adapter layer to convert between our *contracts.Message
 // to their own preferred dispatch type (perhaps a library for RabbitMQ, or Kafka, etc.).
-func NewDispatcher(inner contracts.Dispatcher, db storage.DB) *Dispatcher {
+func NewDispatcher(inner contracts.Dispatcher, db contracts.DB) *Dispatcher {
 	return &Dispatcher{
 		inner: inner,
 		db:    db,

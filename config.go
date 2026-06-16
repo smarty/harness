@@ -65,11 +65,11 @@ import (
 // contracts.ErrInvalidConfiguration and names every offending value) and the
 // application should not proceed.
 func New(ctx context.Context, options ...option) (contracts.Pipeline, error) {
-	var cfg pipeline.Configuration
+	var config pipeline.Configuration
 	for _, apply := range Options.defaults(options...) {
-		apply(&cfg)
+		apply(&config)
 	}
-	return pipeline.Build(ctx, cfg)
+	return pipeline.Build(ctx, config)
 }
 
 var Options singleton
@@ -105,20 +105,15 @@ func (singleton) Monitor(value contracts.Monitor) option {
 	return func(this *pipeline.Configuration) { this.Monitor = value }
 }
 
-// Recoverer sets the collaborator that loads previously persisted but
-// undispatched messages at startup so the broadcast stage can dispatch them.
-func (singleton) Recoverer(value contracts.Recoverer) option {
-	return func(this *pipeline.Configuration) { this.Recoverer = value }
+// Storage uses the provided db to build and set the Recovery, Writer,
+// and Dispatcher components.
+func (singleton) Storage(db contracts.DB) option {
+	return func(this *pipeline.Configuration) { this.Storage = db }
 }
 
 // Serializer sets the collaborator used to encode outgoing messages into bytes.
 func (singleton) Serializer(value contracts.Serializer) option {
 	return func(this *pipeline.Configuration) { this.Serializer = value }
-}
-
-// Writer sets the collaborator that persists encoded messages (e.g. to a database or message store).
-func (singleton) Writer(value contracts.Writer) option {
-	return func(this *pipeline.Configuration) { this.Writer = value }
 }
 
 // Dispatcher sets the collaborator that broadcasts outgoing messages to downstream consumers.
@@ -163,9 +158,8 @@ func (singleton) defaults(options ...option) []option {
 	var blank nop
 	return append([]option{
 		Options.Monitor(blank),
-		Options.Recoverer(blank),
+		Options.Storage(blank),
 		Options.Serializer(blank),
-		Options.Writer(blank),
 		Options.Dispatcher(blank),
 		Options.BurstCapacity(1024),
 		Options.PipelineBufferCapacity(4),
@@ -178,9 +172,8 @@ func (singleton) defaults(options ...option) []option {
 // zero options and still produce a runnable (if inert) pipeline.
 type nop struct{}
 
-func (nop) Track(any)                                                  {}
-func (nop) Recover(context.Context, int) ([]*contracts.Message, error) { return nil, nil }
-func (nop) Serialize(io.Writer, any) error                             { return nil }
-func (nop) ContentType() string                                        { return "" }
-func (nop) Write(context.Context, ...*contracts.Message) error         { return nil }
-func (nop) Dispatch(context.Context, ...*contracts.Message) error      { return nil }
+func (nop) Track(any)                                             {}
+func (nop) Serialize(io.Writer, any) error                        { return nil }
+func (nop) ContentType() string                                   { return "" }
+func (nop) Dispatch(context.Context, ...*contracts.Message) error { return nil }
+func (nop) Handle(context.Context, any) error                     { return nil } // TODO: rename storage method to Exec

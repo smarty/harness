@@ -50,6 +50,10 @@ type (
 
 // Collaborator interfaces — callers supply real implementations via Options.*
 type (
+	DB interface {
+		Handle(ctx context.Context, operation any) error
+	}
+
 	// Recoverer loads stored-but-undispatched messages at startup; the pipeline
 	// dispatches them before any live traffic to preserve dispatch order.
 	//

@@ -12,6 +12,7 @@ import (
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/contracts/monitoring"
+	"github.com/smarty/harness/v2/internal/storage"
 )
 
 func TestPipelineFixture(t *testing.T) {
@@ -29,6 +30,7 @@ type PipelineFixture struct {
 	executeOutputs [][]any
 
 	writeLock     sync.Mutex
+	nextID        uint64
 	writeCalls    [][]*contracts.Message
 	dispatchLock  sync.Mutex
 	dispatchCalls [][]*contracts.Message
@@ -44,9 +46,8 @@ func (this *PipelineFixture) Setup() {
 	var err error
 	this.pipeline, err = Build(this.ctx, Configuration{
 		Monitor:                this,
-		Recoverer:              this,
+		Storage:                this,
 		Serializer:             this,
-		Writer:                 this,
 		Dispatcher:             this,
 		DomainTypes:            []any{this},
 		BurstCapacity:          1024,
@@ -83,11 +84,6 @@ func (this *PipelineFixture) Execute(message any, broadcast func(...any)) {
 	this.ExecuteCommand(commandType(""), broadcast)
 }
 
-func (this *PipelineFixture) Recover(ctx context.Context, _ int) ([]*contracts.Message, error) {
-	this.So(ctx.Value("testing"), should.Equal, this.Name())
-	return nil, nil
-}
-
 func (this *PipelineFixture) Serialize(out io.Writer, _ any) error {
 	_, _ = out.Write([]byte("encoded"))
 	return nil
@@ -95,12 +91,16 @@ func (this *PipelineFixture) Serialize(out io.Writer, _ any) error {
 
 func (this *PipelineFixture) ContentType() string { return "" }
 
-func (this *PipelineFixture) Write(ctx context.Context, messages ...*contracts.Message) error {
+// Handle stands in for the storage.DB: it assigns ids on insert (so the
+// Dispatcher's id!=0 guard is satisfied) and captures each persisted batch.
+func (this *PipelineFixture) Handle(ctx context.Context, operation any) error {
 	this.So(ctx.Value("testing"), should.Equal, this.Name())
-	buffer := deepCopy(messages) // messages are pooled; copy before the call returns
-	this.writeLock.Lock()
-	this.writeCalls = append(this.writeCalls, buffer)
-	this.writeLock.Unlock()
+	if op, ok := operation.(*storage.InsertMessages); ok {
+		this.writeLock.Lock()
+		defer this.writeLock.Unlock()
+		this.nextID = assignTestIDs(this.nextID, op.Messages)
+		this.writeCalls = append(this.writeCalls, deepCopy(op.Messages)) // messages are pooled; copy before the call returns
+	}
 	return nil
 }
 
@@ -111,6 +111,22 @@ func (this *PipelineFixture) Dispatch(ctx context.Context, messages ...*contract
 	this.dispatchCalls = append(this.dispatchCalls, captured)
 	this.dispatchLock.Unlock()
 	return nil
+}
+
+// assignTestIDs gives each message a positive, sequential id (the first id
+// beginning at next, treating a zero next as 1), returning the next free id.
+// The pipeline's sqladapter Dispatcher rejects id==0, just as the real
+// mysql.Mapper derives ids from LAST_INSERT_ID; an in-memory storage stand-in
+// must therefore assign positive ids or live traffic loops forever in broadcast.
+func assignTestIDs(next uint64, messages []*contracts.Message) uint64 {
+	if next == 0 {
+		next = 1
+	}
+	for _, message := range messages {
+		message.ID = next
+		next++
+	}
+	return next
 }
 
 func deepCopy(messages []*contracts.Message) (results []*contracts.Message) {

@@ -11,6 +11,7 @@ import (
 	"github.com/smarty/gunit/v2/assert/better"
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/contracts"
+	"github.com/smarty/harness/v2/internal/storage"
 )
 
 func TestPoolHygieneFixture(t *testing.T) {
@@ -31,21 +32,24 @@ type PoolHygieneFixture struct {
 	*gunit.Fixture
 
 	writeLock sync.Mutex
+	nextID    uint64
 	written   []string
 }
 
-func (this *PoolHygieneFixture) Write(_ context.Context, messages ...*contracts.Message) error {
-	this.writeLock.Lock()
-	defer this.writeLock.Unlock()
-	for _, message := range messages {
-		this.written = append(this.written, message.Type)
+// Handle stands in for the storage.DB: it assigns ids on insert (so the
+// Dispatcher's id!=0 guard is satisfied) and records each persisted message's Type.
+func (this *PoolHygieneFixture) Handle(_ context.Context, operation any) error {
+	if op, ok := operation.(*storage.InsertMessages); ok {
+		this.writeLock.Lock()
+		defer this.writeLock.Unlock()
+		this.nextID = assignTestIDs(this.nextID, op.Messages)
+		for _, message := range op.Messages {
+			this.written = append(this.written, message.Type)
+		}
 	}
 	return nil
 }
 
-func (this *PoolHygieneFixture) Recover(context.Context, int) ([]*contracts.Message, error) {
-	return nil, nil
-}
 func (this *PoolHygieneFixture) Track(any)                                             {}
 func (this *PoolHygieneFixture) Serialize(io.Writer, any) error                        { return nil }
 func (this *PoolHygieneFixture) ContentType() string                                   { return "" }
@@ -57,9 +61,8 @@ func (this *PoolHygieneFixture) TestRecycledMessagesCarryTheTypeOfTheirCurrentVa
 
 	subject, err := Build(ctx, Configuration{
 		Monitor:    this,
-		Recoverer:  this,
+		Storage:    this,
 		Serializer: this,
-		Writer:     this,
 		Dispatcher: this,
 		MessageTypes: map[reflect.Type]string{
 			reflect.TypeOf(poolEventA{}): "pool-hygiene:event-a",

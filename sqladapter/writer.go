@@ -12,13 +12,13 @@ import (
 // operation so is not safe for concurrent use. A Writer must be driven
 // from a single goroutine (as the pipeline does).
 type Writer struct {
-	db storage.DB
+	db contracts.DB
 	op *storage.InsertMessages
 }
 
 // NewWriter builds a Writer that inserts rows into the `Messages` table via the
 // supplied storage.DB.
-func NewWriter(db storage.DB) *Writer {
+func NewWriter(db contracts.DB) *Writer {
 	return &Writer{
 		db: db,
 		op: new(storage.InsertMessages),

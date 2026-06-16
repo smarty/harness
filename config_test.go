@@ -34,8 +34,8 @@ func (this *ConfigFixture) TestNop() {
 	this.So(func() { n.Track(nil) }, should.NOT.Panic)
 	this.So(n.Serialize(nil, nil), should.BeNil)
 	this.So(n.ContentType(), should.BeEmpty)
-	this.So(n.Write(nil), should.BeNil)
 	this.So(n.Dispatch(nil), should.BeNil)
+	this.So(n.Handle(nil, nil), should.BeNil)
 }
 
 func (this *ConfigFixture) TestDefaultsPopulateCapacities() {
@@ -51,8 +51,8 @@ func (this *ConfigFixture) TestDefaultCollaboratorsAreNop() {
 	cfg := this.apply()
 	this.So(cfg.Monitor, should.Equal, nop{})
 	this.So(cfg.Serializer, should.Equal, nop{})
-	this.So(cfg.Writer, should.Equal, nop{})
 	this.So(cfg.Dispatcher, should.Equal, nop{})
+	this.So(cfg.Storage, should.Equal, nop{})
 }
 
 func (this *ConfigFixture) TestTypesOptionStoresValuesVerbatim() {

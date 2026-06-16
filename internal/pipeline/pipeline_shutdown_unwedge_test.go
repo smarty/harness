@@ -13,6 +13,7 @@ import (
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/contracts/monitoring"
+	"github.com/smarty/harness/v2/internal/storage"
 )
 
 func TestShutdownUnwedgeFixture(t *testing.T) {
@@ -36,6 +37,7 @@ type ShutdownUnwedgeFixture struct {
 
 	gate     chan struct{} // Execute blocks here until the test releases the wedge.
 	inFlight chan struct{} // one signal per successfully-enqueued batch.
+	nextID   uint64
 }
 
 type wedgeCommand string
@@ -47,9 +49,8 @@ func (this *ShutdownUnwedgeFixture) Setup() {
 	var err error
 	this.pipeline, err = Build(this.Context(), Configuration{
 		Monitor:                this,
-		Recoverer:              this,
+		Storage:                this,
 		Serializer:             this,
-		Writer:                 this,
 		Dispatcher:             this,
 		DomainTypes:            []any{this},
 		BurstCapacity:          1, // tiny entrypoint channel: effective capacity 2 once wedged.
@@ -71,16 +72,21 @@ func (this *ShutdownUnwedgeFixture) ExecuteWedge(_ wedgeCommand, broadcast func(
 func (this *ShutdownUnwedgeFixture) Execute(message any, broadcast func(...any)) {
 	this.ExecuteWedge(message.(wedgeCommand), broadcast)
 }
-func (this *ShutdownUnwedgeFixture) Recover(context.Context, int) ([]*contracts.Message, error) {
-	return nil, nil
-}
 func (this *ShutdownUnwedgeFixture) Serialize(out io.Writer, _ any) error {
 	_, _ = out.Write([]byte("encoded"))
 	return nil
 }
-func (this *ShutdownUnwedgeFixture) ContentType() string                                { return "" }
-func (this *ShutdownUnwedgeFixture) Write(context.Context, ...*contracts.Message) error { return nil }
+func (this *ShutdownUnwedgeFixture) ContentType() string { return "" }
 func (this *ShutdownUnwedgeFixture) Dispatch(context.Context, ...*contracts.Message) error {
+	return nil
+}
+
+// Handle stands in for the storage.DB: it assigns ids on insert so the two
+// accepted batches dispatch cleanly once the wedge is released at shutdown.
+func (this *ShutdownUnwedgeFixture) Handle(_ context.Context, operation any) error {
+	if op, ok := operation.(*storage.InsertMessages); ok {
+		this.nextID = assignTestIDs(this.nextID, op.Messages)
+	}
 	return nil
 }
 

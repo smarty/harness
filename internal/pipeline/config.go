@@ -11,9 +11,8 @@ import (
 
 type Configuration struct {
 	Monitor                contracts.Monitor
-	Recoverer              contracts.Recoverer
+	Storage                contracts.DB
 	Serializer             contracts.Serializer
-	Writer                 contracts.Writer
 	Dispatcher             contracts.Dispatcher
 	MessageTypes           map[reflect.Type]string
 	DomainTypes            []any

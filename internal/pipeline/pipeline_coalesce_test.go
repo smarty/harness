@@ -11,6 +11,7 @@ import (
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/contracts/monitoring"
+	"github.com/smarty/harness/v2/internal/storage"
 )
 
 func TestCoalesceFixture(t *testing.T) {
@@ -44,6 +45,7 @@ type CoalesceFixture struct {
 	inFlight chan struct{} // one signal per successfully-enqueued caller.
 
 	lock           sync.Mutex
+	nextID         uint64
 	written        []any
 	dispatched     []any
 	writeUnitSizes []int
@@ -58,9 +60,8 @@ func (this *CoalesceFixture) Setup() {
 	var err error
 	this.pipeline, err = Build(this.Context(), Configuration{
 		Monitor:                this,
-		Recoverer:              this,
+		Storage:                this,
 		Serializer:             this,
-		Writer:                 this,
 		Dispatcher:             this,
 		DomainTypes:            []any{this},
 		BurstCapacity:          coalesceCallers, // every caller enqueues without blocking.
@@ -84,21 +85,23 @@ func (this *CoalesceFixture) Execute(message any, broadcast func(...any)) {
 	broadcast(message)
 }
 
-func (this *CoalesceFixture) Recover(context.Context, int) ([]*contracts.Message, error) {
-	return nil, nil
-}
 func (this *CoalesceFixture) Serialize(out io.Writer, _ any) error {
 	_, _ = out.Write([]byte("encoded"))
 	return nil
 }
 func (this *CoalesceFixture) ContentType() string { return "" }
 
-func (this *CoalesceFixture) Write(_ context.Context, messages ...*contracts.Message) error {
-	this.lock.Lock()
-	defer this.lock.Unlock()
-	this.writeUnitSizes = append(this.writeUnitSizes, len(messages))
-	for _, message := range messages {
-		this.written = append(this.written, message.Value)
+// Handle stands in for the storage.DB: it assigns ids on insert (so the
+// Dispatcher's id!=0 guard is satisfied) and records each persisted unit's size.
+func (this *CoalesceFixture) Handle(_ context.Context, operation any) error {
+	if op, ok := operation.(*storage.InsertMessages); ok {
+		this.lock.Lock()
+		defer this.lock.Unlock()
+		this.nextID = assignTestIDs(this.nextID, op.Messages)
+		this.writeUnitSizes = append(this.writeUnitSizes, len(op.Messages))
+		for _, message := range op.Messages {
+			this.written = append(this.written, message.Value)
+		}
 	}
 	return nil
 }

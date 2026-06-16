@@ -18,13 +18,13 @@ import (
 // page means the backlog is exhausted and recovery is complete. The two SQL
 // queries are routed through the storage.DB seam.
 type Recovery struct {
-	db          storage.DB
+	db          contracts.DB
 	cursor      uint64 // advances past each successfully returned page; starts at MIN(id)-1 of the backlog
 	boundary    uint64 // MAX(id) of the backlog, snapshotted on the first call
 	snapshotted bool
 }
 
-func NewRecovery(db storage.DB) *Recovery {
+func NewRecovery(db contracts.DB) *Recovery {
 	return &Recovery{db: db}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/contracts/monitoring"
+	"github.com/smarty/harness/v2/internal/storage"
 )
 
 func TestAbandonmentFixture(t *testing.T) {
@@ -45,9 +46,8 @@ func (this *AbandonmentFixture) Setup() {
 	var err error
 	this.pipeline, err = Build(ctx, Configuration{
 		Monitor:                this,
-		Recoverer:              this,
+		Storage:                this,
 		Serializer:             this,
-		Writer:                 this,
 		Dispatcher:             this,
 		DomainTypes:            []any{this},
 		BurstCapacity:          1024,
@@ -68,9 +68,6 @@ func (this *AbandonmentFixture) ExecuteCommand(_ abandonedCommand, broadcast fun
 func (this *AbandonmentFixture) Execute(message any, broadcast func(...any)) {
 	this.ExecuteCommand(message.(abandonedCommand), broadcast)
 }
-func (this *AbandonmentFixture) Recover(context.Context, int) ([]*contracts.Message, error) {
-	return nil, nil
-}
 func (this *AbandonmentFixture) Serialize(out io.Writer, _ any) error {
 	_, _ = out.Write([]byte("encoded"))
 	return nil
@@ -78,9 +75,14 @@ func (this *AbandonmentFixture) Serialize(out io.Writer, _ any) error {
 func (this *AbandonmentFixture) ContentType() string { return "" }
 func (this *AbandonmentFixture) Track(any)           {}
 
-func (this *AbandonmentFixture) Write(context.Context, ...*contracts.Message) error {
-	this.firstWrite.Do(func() { close(this.writeAttempts) })
-	return errors.New("database unavailable")
+// Handle stands in for the storage.DB: the insert never succeeds, simulating a
+// persistently unavailable database so the blocked Handle caller is abandoned.
+func (this *AbandonmentFixture) Handle(_ context.Context, operation any) error {
+	if _, ok := operation.(*storage.InsertMessages); ok {
+		this.firstWrite.Do(func() { close(this.writeAttempts) })
+		return errors.New("database unavailable")
+	}
+	return nil
 }
 
 func (this *AbandonmentFixture) Dispatch(context.Context, ...*contracts.Message) error {
