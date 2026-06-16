@@ -146,7 +146,11 @@ func (this *Mapper) markMessagesDispatched(ctx context.Context, operation *stora
 	defer this.statements.Put(statement)
 	statement.reset()
 
-	statement.text.WriteString(`UPDATE Messages SET dispatched = NOW(3) WHERE dispatched IS NULL AND id IN (`)
+	statement.text.WriteString(`
+		UPDATE Messages
+		   SET dispatched = NOW(3)
+		 WHERE dispatched IS NULL
+		   AND id IN (`)
 	for i, message := range operation.Messages {
 		if i > 0 {
 			statement.text.WriteString(`,`)
@@ -163,7 +167,10 @@ func (this *Mapper) markMessagesDispatched(ctx context.Context, operation *stora
 
 func (this *Mapper) loadUndispatchedBounds(ctx context.Context, operation *storage.LoadUndispatchedBounds) error {
 	var lo, hi sql.NullInt64
-	row := this.handle.QueryRowContext(ctx, `SELECT MIN(id), MAX(id) FROM Messages WHERE dispatched IS NULL`)
+	row := this.handle.QueryRowContext(ctx, `
+		SELECT MIN(id), MAX(id)
+		  FROM Messages
+		 WHERE dispatched IS NULL`)
 	if err := row.Scan(&lo, &hi); err != nil {
 		return err
 	}
@@ -174,8 +181,14 @@ func (this *Mapper) loadUndispatchedBounds(ctx context.Context, operation *stora
 }
 
 func (this *Mapper) loadUndispatchedPage(ctx context.Context, operation *storage.LoadUndispatchedPage) error {
-	rows, err := this.handle.QueryContext(ctx, `SELECT id, type, payload FROM Messages
-		WHERE dispatched IS NULL AND id > ? AND id <= ? ORDER BY id LIMIT ?`, operation.AfterID, operation.ThroughID, operation.Limit)
+	rows, err := this.handle.QueryContext(ctx, `
+		SELECT id, type, payload
+		  FROM Messages
+		 WHERE dispatched IS NULL
+		   AND id > ?
+		   AND id <= ?
+		 ORDER BY id
+		 LIMIT ?`, operation.AfterID, operation.ThroughID, operation.Limit)
 	if err != nil {
 		return err
 	}
