@@ -1,6 +1,6 @@
 ---
-name: Import harness + sqladapter into messaging/v3
-description: Proposal to lift the infra/harness pipeline into github.com/smarty/messaging/v3/handlers/harness and relocate the SQL-bound dispatcher/writer/recovery as a sqladapter subpackage.
+name: Import harness + adapters into messaging/v3
+description: Proposal to lift the infra/harness pipeline into github.com/smarty/messaging/v3/handlers/harness and relocate the SQL-bound dispatcher/writer/recovery as a adapters subpackage.
 type: plot
 ---
 

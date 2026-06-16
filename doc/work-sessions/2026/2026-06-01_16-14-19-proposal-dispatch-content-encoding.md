@@ -1,6 +1,6 @@
 ---
 name: Stop double-encoding payloads across dispatch and recovery
-description: Eliminate the redundant second serialization in the sqladapter Dispatcher and propagate ContentType through the in-memory harness Message — closing the TODO at handlers/harness/sqladapter/dispatcher.go:58 and fixing the recovery-path content-type and Topic mishandling. No schema changes.
+description: Eliminate the redundant second serialization in the adapters Dispatcher and propagate ContentType through the in-memory harness Message — closing the TODO at handlers/harness/adapters/dispatcher.go:58 and fixing the recovery-path content-type and Topic mishandling. No schema changes.
 type: plot
 ---
 

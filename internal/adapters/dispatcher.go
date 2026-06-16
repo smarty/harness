@@ -1,9 +1,9 @@
-// Package sqladapter provides a reference implementation of the
+// Package adapters provides a reference implementation of the
 // handlers/harness Writer and Dispatcher interfaces, bound to the `Messages`
 // MySQL table defined by doc/mysql/schema.sql in this module (columns
 // `id`, `dispatched`, `type`, `payload`). Callers running a different schema
 // should copy and adapt these types.
-package sqladapter
+package adapters
 
 import (
 	"context"
@@ -39,7 +39,7 @@ func (this *Dispatcher) Dispatch(ctx context.Context, messages ...*contracts.Mes
 		return nil
 	}
 	// A message with ID==0 was never assigned an identity (a Writer that failed
-	// to assign, or a non-sqladapter Writer). The mark-dispatched UPDATE below
+	// to assign, or a non-adapters Writer). The mark-dispatched UPDATE below
 	// keys on id, so such a row can never be matched: it would be published here
 	// and then republished by recovery on every restart, forever. Reject the
 	// batch before publishing — symmetric to the Writer's first<=0 identity

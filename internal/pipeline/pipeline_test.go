@@ -115,7 +115,7 @@ func (this *PipelineFixture) Dispatch(ctx context.Context, messages ...*contract
 
 // assignTestIDs gives each message a positive, sequential id (the first id
 // beginning at next, treating a zero next as 1), returning the next free id.
-// The pipeline's sqladapter Dispatcher rejects id==0, just as the real
+// The pipeline's adapters Dispatcher rejects id==0, just as the real
 // mysql.Mapper derives ids from LAST_INSERT_ID; an in-memory storage stand-in
 // must therefore assign positive ids or live traffic loops forever in broadcast.
 func assignTestIDs(next uint64, messages []*contracts.Message) uint64 {

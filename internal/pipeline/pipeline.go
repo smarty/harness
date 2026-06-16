@@ -5,8 +5,8 @@ import (
 	"context"
 
 	"github.com/smarty/harness/v2/contracts"
+	"github.com/smarty/harness/v2/internal/adapters"
 	"github.com/smarty/harness/v2/internal/generic"
-	"github.com/smarty/harness/v2/internal/sqladapter"
 )
 
 func Build(ctx context.Context, config Configuration) (result contracts.Pipeline, err error) {
@@ -37,14 +37,14 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 		SheddingEntrypoint:  adapter,
 		BlockingEntrypoint:  entry,
 		Listeners: []contracts.Listener{
-			newRecovery(ctx, sqladapter.NewRecovery(config.Storage), recoveryBatchSize, work4a, wait, config.Monitor),
+			newRecovery(ctx, adapters.NewRecovery(config.Storage), recoveryBatchSize, work4a, wait, config.Monitor),
 			entry,
 			newExecution(config.Monitor, config.ExecutionUnitSize, unitPool.Get, messagePool.Get,
 				config.MessageTypes, batches, work1, newRouter(config.DomainTypes...)),
 			newSerialization(config.Monitor, config.Serializer, work1, work2),
-			newPersistence(ctx, config.Monitor, work2, work3, sqladapter.NewWriter(config.Storage), wait),
+			newPersistence(ctx, config.Monitor, work2, work3, adapters.NewWriter(config.Storage), wait),
 			newCompletion(work3, work4b),
-			newBroadcast(ctx, config.Monitor, work4a, work4b, work5, sqladapter.NewDispatcher(config.Dispatcher, config.Storage), wait),
+			newBroadcast(ctx, config.Monitor, work4a, work4b, work5, adapters.NewDispatcher(config.Dispatcher, config.Storage), wait),
 			newTerminal(work5, unitPool.Put, messagePool.Put),
 		},
 	}
