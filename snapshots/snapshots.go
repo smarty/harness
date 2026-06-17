@@ -19,15 +19,15 @@ import (
 	"github.com/smarty/harness/v2/internal/storage"
 )
 
-// Logger receives informational progress messages during initialization.
+// logger receives informational progress messages during initialization.
 // A *log.Logger satisfies it.
-type Logger interface {
+type logger interface {
 	Printf(format string, args ...any)
 }
 
-// Applicator is the domain being rebuilt: InitializeDomain calls Apply once with
+// applicator is the domain being rebuilt: InitializeDomain calls Apply once with
 // the decoded snapshot, then once per replayed event in ascending id order.
-type Applicator interface {
+type applicator interface {
 	Apply(message any)
 }
 
@@ -39,7 +39,7 @@ type DomainInitializationReport struct {
 }
 
 // LoadSnapshot decompresses (if gzip) and unmarshals a snapshot payload into S.
-func LoadSnapshot[S any](payload []byte, contentEncoding string, highWatermark uint64, logger Logger) (snapshot S, err error) {
+func LoadSnapshot[S any](payload []byte, contentEncoding string, highWatermark uint64, logger logger) (snapshot S, err error) {
 	if contentEncoding == "gzip" {
 		payload, err = gunzip(payload)
 		if err != nil {
@@ -57,12 +57,12 @@ func LoadSnapshot[S any](payload []byte, contentEncoding string, highWatermark u
 // loads and applies every event newer than the snapshot's high watermark.
 func InitializeDomain[S any](
 	ctx context.Context,
-	logger Logger,
+	logger logger,
 	db contracts.Storage,
 	snapshotTable string,
 	messageTypes map[string]reflect.Type,
 	typeNames map[reflect.Type]string,
-	domain Applicator,
+	domain applicator,
 	events ...any,
 ) (
 	result DomainInitializationReport,
