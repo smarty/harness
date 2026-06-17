@@ -38,8 +38,8 @@ type DomainInitializationReport struct {
 	EventsAppliedCount    uint64
 }
 
-// LoadSnapshot decompresses (if gzip) and unmarshals a snapshot payload into S.
-func LoadSnapshot[S any](logger logger, payload []byte, contentEncoding string, highWatermark uint64) (snapshot S, err error) {
+// PopulateSnapshot decompresses (if gzip) and unmarshals a snapshot payload into S.
+func PopulateSnapshot[S any](logger logger, payload []byte, contentEncoding string, highWatermark uint64) (snapshot S, err error) {
 	if contentEncoding == "gzip" {
 		payload, err = gunzip(payload)
 		if err != nil {
@@ -75,7 +75,7 @@ func InitializeDomain[S any](
 	if !latest.Result.Found {
 		return result, errMissingSnapshot
 	}
-	snapshot, err := LoadSnapshot[S](logger, latest.Result.Payload, latest.Result.ContentEncoding, latest.Result.HighWatermark)
+	snapshot, err := PopulateSnapshot[S](logger, latest.Result.Payload, latest.Result.ContentEncoding, latest.Result.HighWatermark)
 	if err != nil {
 		return result, err
 	}
