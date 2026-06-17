@@ -36,7 +36,6 @@ type DomainInitializationReport struct {
 	PreviousHighWatermark uint64
 	NewHighWatermark      uint64
 	EventsAppliedCount    uint64
-	Error                 error
 }
 
 // LoadSnapshot decompresses (if gzip) and unmarshals a snapshot payload into S.
@@ -65,20 +64,20 @@ func InitializeDomain[S any](
 	typeNames map[reflect.Type]string,
 	domain Applicator,
 	events ...any,
-) (result DomainInitializationReport) {
+) (
+	result DomainInitializationReport,
+	err error,
+) {
 	latest := &storage.LoadLatestSnapshot{TableName: snapshotTable}
 	if err := db.Exec(ctx, latest); err != nil {
-		result.Error = err
-		return result
+		return result, err
 	}
 	if !latest.Result.Found {
-		result.Error = errMissingSnapshot
-		return result
+		return result, errMissingSnapshot
 	}
 	snapshot, err := LoadSnapshot[S](latest.Result.Payload, latest.Result.ContentEncoding, latest.Result.HighWatermark, logger)
 	if err != nil {
-		result.Error = err
-		return result
+		return result, err
 	}
 	result.PreviousHighWatermark = latest.Result.HighWatermark
 	result.NewHighWatermark = latest.Result.HighWatermark
@@ -86,8 +85,7 @@ func InitializeDomain[S any](
 
 	decoded, newHighWatermark, err := LoadEventsSince(ctx, db, latest.Result.HighWatermark, messageTypes, typeNames, events...)
 	if err != nil {
-		result.Error = err
-		return result
+		return result, err
 	}
 	for _, event := range decoded {
 		domain.Apply(event)
@@ -98,7 +96,7 @@ func InitializeDomain[S any](
 	}
 	logger.Printf("[INFO] initialized domain: applied %d event(s) through high watermark %d",
 		result.EventsAppliedCount, result.NewHighWatermark)
-	return result
+	return result, nil
 }
 
 // SaveSnapshot persists one snapshot row (thin wrapper over db.Handle so external

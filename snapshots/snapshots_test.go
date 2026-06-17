@@ -137,12 +137,12 @@ func (this *SnapshotsFixture) TestInitializeDomainAppliesSnapshotThenEvents() {
 	}
 	spy := &spyApplicator{}
 
-	report := InitializeDomain[sampleSnapshot](
+	report, err := InitializeDomain[sampleSnapshot](
 		this.Context(), this, db, "Snapshots", messageTypes(), typeNames(), spy,
 		orderPlaced{}, orderShipped{},
 	)
 
-	this.So(report.Error, should.BeNil)
+	this.So(err, should.BeNil)
 	this.So(report.PreviousHighWatermark, should.Equal, uint64(3))
 	this.So(report.NewHighWatermark, should.Equal, uint64(7))
 	this.So(report.EventsAppliedCount, should.Equal, uint64(2))
@@ -157,12 +157,12 @@ func (this *SnapshotsFixture) TestInitializeDomainMissingSnapshotReports() {
 	db := &fakeDB{snapshot: storage.LoadedSnapshotResult{Found: false}}
 	spy := &spyApplicator{}
 
-	report := InitializeDomain[sampleSnapshot](
+	report, err := InitializeDomain[sampleSnapshot](
 		this.Context(), this, db, "Snapshots", messageTypes(), typeNames(), spy,
 		orderPlaced{},
 	)
 
-	this.So(report.Error, should.WrapError, errMissingSnapshot)
+	this.So(err, should.WrapError, errMissingSnapshot)
 	this.So(report.EventsAppliedCount, should.Equal, uint64(0))
 	this.So(spy.applied, should.BeNil)
 }
@@ -172,11 +172,11 @@ func (this *SnapshotsFixture) TestInitializeDomainHandleErrorReported() {
 	db := &fakeDB{err: boom}
 	spy := &spyApplicator{}
 
-	report := InitializeDomain[sampleSnapshot](
+	_, err := InitializeDomain[sampleSnapshot](
 		this.Context(), this, db, "Snapshots", messageTypes(), typeNames(), spy,
 		orderPlaced{},
 	)
 
-	this.So(report.Error, should.WrapError, boom)
+	this.So(err, should.WrapError, boom)
 	this.So(spy.applied, should.BeNil)
 }
