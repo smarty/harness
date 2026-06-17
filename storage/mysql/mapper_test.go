@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"log"
 	"testing"
 
 	"github.com/smarty/gunit/v2"
@@ -27,11 +28,15 @@ type MapperFixture struct {
 }
 
 func (this *MapperFixture) Setup() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	log.SetOutput(this.Output())
 	this.ctx = this.Context()
 	handle, err := openTestDatabase()
 	this.So(err, should.BeNil)
 	this.handle = handle
 	_, err = handle.Exec(`TRUNCATE TABLE Messages;`)
+	this.So(err, should.BeNil)
+	_, err = handle.Exec(`TRUNCATE TABLE Snapshots;`)
 	this.So(err, should.BeNil)
 	this.stride = this.autoIncrementIncrement()
 	this.subject = NewMapper(handle, this.stride)

@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal — Move snapshot/replay infrastructure into harness/v2</title>
+<style>
+  :root {
+    --ink: #1c2230; --muted: #5b6675; --line: #d9dee7; --bg: #f7f8fb;
+    --accent: #2f6f4f; --accent2: #b4541a; --warn: #8a6d1a; --code-bg: #1f2430;
+  }
+  * { box-sizing: border-box; }
+  body { font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--ink); background: var(--bg); margin: 0; padding: 0 0 6rem; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 0 1.5rem; }
+  header.page { background: linear-gradient(135deg, #20313f, #2f6f4f); color: #fff; padding: 2.4rem 0 2rem; margin-bottom: 2rem; }
+  header.page .wrap { padding-top: 0; }
+  header.page h1 { margin: 0 0 .4rem; font-size: 1.8rem; letter-spacing: -.01em; }
+  header.page .sub { opacity: .92; font-size: 1rem; }
+  header.page .meta { margin-top: 1rem; font-size: .82rem; opacity: .85; }
+  header.page code { background: rgba(255,255,255,.18); color:#fff; }
+  h2 { margin: 2.6rem 0 .8rem; font-size: 1.3rem; letter-spacing: -.01em; border-bottom: 2px solid var(--line); padding-bottom: .35rem; }
+  h3 { margin: 1.8rem 0 .5rem; font-size: 1.05rem; color: var(--accent); }
+  p { margin: .7rem 0; }
+  code { font: 13.5px/1.5 "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; background: #eceff4; padding: .1em .35em; border-radius: 4px; }
+  pre { background: var(--code-bg); color: #e6e9ef; padding: 1rem 1.2rem; border-radius: 8px; overflow-x: auto;
+    font: 13px/1.55 "SF Mono","JetBrains Mono",Menlo,Consolas,monospace; margin: .9rem 0; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .tok-key { color: #c792ea; } .tok-str { color: #c3e88d; } .tok-com { color: #7f8a9c; font-style: italic; }
+  .tok-typ { color: #82aaff; } .tok-fn { color: #ffcb6b; }
+  .callout { border-left: 4px solid var(--accent); background: #eef5f0; padding: .9rem 1.1rem; border-radius: 0 8px 8px 0; margin: 1.2rem 0; }
+  .callout.warn { border-color: var(--warn); background: #faf5e6; }
+  .callout.you { border-color: var(--accent2); background: #fbeee4; }
+  .callout .lbl { font-weight: 700; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; display: block; margin-bottom: .3rem; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .9rem; }
+  th, td { border: 1px solid var(--line); padding: .5rem .65rem; text-align: left; vertical-align: top; }
+  th { background: #edf1f7; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .diagram { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 1.2rem;
+    font: 12.5px/1.4 "SF Mono", Menlo, monospace; white-space: pre; overflow-x: auto; color: var(--ink); }
+  ul.check { list-style: none; padding-left: 0; }
+  ul.check li { position: relative; padding-left: 1.7rem; margin: .35rem 0; }
+  ul.check li::before { content: "☐"; position: absolute; left: 0; color: var(--accent); font-size: 1.05rem; }
+  ul.check li.done::before { content: "☑"; }
+  ul.check li.done { color: var(--muted); }
+  .phase { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.3rem; margin: 1rem 0; }
+  .phase h3 { margin-top: .2rem; }
+  .pill { display:inline-block; font-size:.68rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; padding:.12em .5em; border-radius:99px; vertical-align:middle; margin-left:.4rem; }
+  .pill.red { background:#fde3e0; color:#a23a28; } .pill.green { background:#e1f0e6; color:#2f6f4f; }
+  .legend { font-size: .8rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<header class="page">
+  <div class="wrap">
+    <h1>Move snapshot / replay infrastructure into <code>harness/v2</code></h1>
+    <div class="sub">Generalize the five <code>// TODO: will eventually be moved to an infrastructure package</code> pieces out of <code>billing-context</code>: the snapshot/event storage operations become harness-internal operations handled by <code>mysql.Mapper</code>; <code>InitializeDomain</code> / <code>LoadSnapshot</code> become a new exported <code>snapshots</code> package.</div>
+    <div class="meta">
+      Proposal · 2026-06-16 16:36:48 · branch <code>master</code> · author Michael Whatcott<br>
+      Status: <strong>DRAFT — awaiting review. No code to be written until approved.</strong>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<h2>Background</h2>
+<p>
+<code>billing-context</code> carries five pieces of code tagged
+<code>// TODO: will eventually be moved to an infrastructure package</code>. They are domain-agnostic snapshot
+and event-replay plumbing that happens to live in the application repo. The goal is to generalize them and move
+them into <code>github.com/smarty/harness/v2</code> so every store-and-forward context can reuse them.
+</p>
+
+<table>
+  <tr><th>#</th><th>Today (billing-context)</th><th>Kind</th><th>Consumers</th></tr>
+  <tr><td>1</td><td><code>wireup.InitializeDomain[S]</code></td><td>function</td><td>application, <code>snapshot</code></td></tr>
+  <tr><td>2</td><td><code>wireup.LoadSnapshot[S]</code></td><td>function</td><td><code>InitializeDomain</code>, <code>snapshot-inspect</code>, <code>snapshot-to-sqlite</code></td></tr>
+  <tr><td>3</td><td><code>storage.SaveSnapshot</code></td><td>operation (mapper)</td><td><code>snapshot</code></td></tr>
+  <tr><td>4</td><td><code>storage.LoadLatestSnapshot</code></td><td>operation (mapper)</td><td><code>InitializeDomain</code></td></tr>
+  <tr><td>5</td><td><code>storage.LoadBillingEventsSince</code></td><td>operation (mapper)</td><td><code>InitializeDomain</code>, <code>snapshot-inspect</code>, <code>snapshot-to-sqlite</code></td></tr>
+</table>
+
+<p>Two facts drive the whole design:</p>
+<ul>
+  <li><strong>Operations live in <code>internal/storage</code>.</strong> Per your direction, the three operation
+      structs join the existing pipeline operations in <code>internal/storage/operations.go</code> and are handled by
+      the existing exported <code>storage/mysql.Mapper.Handle</code> switch. Because <code>internal/</code> is not
+      importable from another module, <code>billing-context</code> can no longer name these types directly — it
+      reaches them only through the exported <code>snapshots</code> package (below). This is the lever that forces the
+      generalization rather than a copy-paste.</li>
+  <li><strong>The "reader" is the Mapper.</strong> <code>InitializeDomain</code> stops taking a bespoke
+      <code>storage.Reader</code> and instead takes <code>contracts.DB</code>
+      (<code>Handle(ctx, operation any) error</code>) — the same seam <code>Writer</code>, <code>Dispatcher</code>,
+      and <code>Recovery</code> already route through. <code>mysql.Mapper</code> already implements it.</li>
+</ul>
+
+<p>What "generalize" concretely means, per the three current TODO sub-notes (<em>"table name will come from config"</em>,
+<em>"type constraint will come from config"</em>):</p>
+<ul>
+  <li>The snapshot operations (#3, #4) gain a <code>TableName</code> field so the query is no longer hard-wired to
+      <code>BillingSnapshots</code>. The harness test schema already ships a generic <code>Snapshots</code> table.</li>
+  <li>The events operation (#5) drops the hard-coded <code>type LIKE 'billing:%' OR type IN ('accounting:…')</code>
+      predicate. It instead carries a variadic set of sample event objects plus a <code>map[reflect.Type]string</code>
+      type-names map; the Mapper resolves those to canonical names and builds the <code>type IN (…)</code> clause.</li>
+</ul>
+
+<h2>Approach</h2>
+
+<h3>Target shape</h3>
+<div class="diagram">github.com/smarty/harness/v2
+├── snapshots/                       NEW exported package — the only surface billing sees
+│   ├── snapshots.go                 InitializeDomain[S], LoadSnapshot[S], SaveSnapshot, LoadEventsSince
+│   │                                local Logger + Applicator interfaces, DomainInitializationReport, errors
+│   └── snapshots_test.go            gunit fixtures (no DB; fake contracts.DB)
+├── internal/storage/
+│   └── operations.go                + SaveSnapshot, LoadLatestSnapshot, LoadedSnapshot, LoadEventsSince, Event
+└── storage/mysql/
+    ├── mapper.go                    + 3 Handle cases: saveSnapshot, loadLatestSnapshot, loadEventsSince
+    └── mapper_snapshots_test.go     DB-backed integration tests (Snapshots + Messages tables)</div>
+
+<h3>1 — Three new operations in <code>internal/storage/operations.go</code></h3>
+<p>
+These join <code>InsertMessages</code>, <code>MarkMessagesDispatched</code>, etc. They follow the established
+convention: the caller passes a pointer and the Mapper populates result fields. None import
+<code>database/sql</code>, so the package stays driver-agnostic.
+</p>
+<pre><code><span class="tok-com">// internal/storage/operations.go (additions)</span>
+
+<span class="tok-com">// SaveSnapshot persists one domain snapshot row into TableName.</span>
+<span class="tok-key">type</span> <span class="tok-typ">SaveSnapshot</span> <span class="tok-key">struct</span> {
+    TableName       <span class="tok-typ">string</span>
+    Timestamp       time.<span class="tok-typ">Time</span>
+    HighWatermark   <span class="tok-typ">uint64</span>
+    Payload         []<span class="tok-typ">byte</span>
+    ContentType     <span class="tok-typ">string</span>
+    ContentEncoding <span class="tok-typ">string</span>
+}
+
+<span class="tok-com">// LoadLatestSnapshot loads the most recent snapshot row from TableName.</span>
+<span class="tok-key">type</span> <span class="tok-typ">LoadLatestSnapshot</span> <span class="tok-key">struct</span> {
+    TableName <span class="tok-typ">string</span>
+    Result    <span class="tok-typ">LoadedSnapshot</span> <span class="tok-com">// populated by the handler</span>
+}
+<span class="tok-key">type</span> <span class="tok-typ">LoadedSnapshot</span> <span class="tok-key">struct</span> {
+    Found           <span class="tok-typ">bool</span>
+    HighWatermark   <span class="tok-typ">uint64</span>
+    Payload         []<span class="tok-typ">byte</span>
+    ContentType     <span class="tok-typ">string</span>
+    ContentEncoding <span class="tok-typ">string</span>
+}
+
+<span class="tok-com">// LoadEventsSince loads serialized events newer than HighWatermark whose stored</span>
+<span class="tok-com">// type matches one of EventTypes, each resolved to its canonical name via TypeNames.</span>
+<span class="tok-key">type</span> <span class="tok-typ">LoadEventsSince</span> <span class="tok-key">struct</span> {
+    HighWatermark <span class="tok-typ">uint64</span>
+    EventTypes    []<span class="tok-key">any</span>                      <span class="tok-com">// sample instances; key into TypeNames</span>
+    TypeNames     <span class="tok-key">map</span>[reflect.<span class="tok-typ">Type</span>]<span class="tok-typ">string</span> <span class="tok-com">// reflect.Type → canonical name</span>
+    Result        <span class="tok-key">struct</span> {
+        NewHighWatermark <span class="tok-typ">uint64</span>
+        Events           []<span class="tok-typ">Event</span>
+    } <span class="tok-com">// populated by the handler</span>
+}
+<span class="tok-key">type</span> <span class="tok-typ">Event</span> <span class="tok-key">struct</span> {
+    Type    <span class="tok-typ">string</span>
+    Payload []<span class="tok-typ">byte</span>
+}</code></pre>
+<p class="legend">
+Per your Q2 answer, <code>LoadEventsSince</code> carries the objects + map and the Mapper resolves names at
+query-build time (rather than a constructor pre-resolving to <code>[]string</code>).
+</p>
+
+<h3>2 — Three new <code>Handle</code> cases in <code>storage/mysql/mapper.go</code></h3>
+<p>
+All driver detail stays in the package that already owns <code>database/sql</code>. Table names cannot be bound as
+<code>?</code> placeholders, so <code>TableName</code> is interpolated into the SQL string — guarded by a strict
+identifier check (see the warning below). The event-name list <em>is</em> bound positionally.
+</p>
+<pre><code><span class="tok-key">func</span> (this *<span class="tok-typ">Mapper</span>) <span class="tok-fn">Handle</span>(ctx context.<span class="tok-typ">Context</span>, operation <span class="tok-key">any</span>) <span class="tok-typ">error</span> {
+    <span class="tok-key">switch</span> op := operation.(<span class="tok-key">type</span>) {
+    <span class="tok-com">// … existing cases …</span>
+    <span class="tok-key">case</span> *storage.<span class="tok-typ">SaveSnapshot</span>:
+        <span class="tok-key">return</span> this.<span class="tok-fn">saveSnapshot</span>(ctx, op)
+    <span class="tok-key">case</span> *storage.<span class="tok-typ">LoadLatestSnapshot</span>:
+        <span class="tok-key">return</span> this.<span class="tok-fn">loadLatestSnapshot</span>(ctx, op)
+    <span class="tok-key">case</span> *storage.<span class="tok-typ">LoadEventsSince</span>:
+        <span class="tok-key">return</span> this.<span class="tok-fn">loadEventsSince</span>(ctx, op)
+    <span class="tok-key">default</span>:
+        <span class="tok-key">return</span> storage.<span class="tok-typ">ErrUnsupportedOperation</span>
+    }
+}</code></pre>
+<div class="diagram">saveSnapshot:       INSERT INTO &lt;TableName&gt; (created, high_watermark, payload, content_type, content_encoding)
+                    VALUES (?, ?, ?, ?, ?)
+loadLatestSnapshot: SELECT high_watermark, payload, content_type, content_encoding
+                    FROM &lt;TableName&gt; ORDER BY id DESC LIMIT 1        (Found=false when no row)
+loadEventsSince:    SELECT id, type, payload FROM Messages
+                    WHERE type IN (?, ?, …) AND id &gt; ? ORDER BY id ASC</div>
+<p class="legend">
+Note: <code>SaveSnapshot</code> takes <code>SaveSnapshot.Timestamp</code> as the <code>created</code> value, matching
+billing's current behavior of stamping the time at the call site rather than using <code>NOW()</code>.
+<code>loadEventsSince</code> reads from the standard <code>Messages</code> table the rest of the Mapper already
+targets (see Trade-offs for why it does not also take a <code>TableName</code>).
+</p>
+
+<div class="callout warn">
+  <span class="lbl">SQL identifier safety</span>
+  Interpolating <code>TableName</code> into a query is injection-prone if it ever carries untrusted input. Even though
+  table names here come from trusted config/code, the Mapper will validate <code>TableName</code> against
+  <code>^[A-Za-z0-9_]+$</code> and return an error otherwise, and wrap it in backticks. An empty <code>TableName</code>
+  is rejected rather than silently producing <code>FROM&nbsp;</code>.
+</div>
+
+<h3>3 — New exported <code>snapshots</code> package</h3>
+<p>
+This is the entire public surface. It owns its own tiny collaborator interfaces (per your direction) and constructs
+the now-internal operations on the caller's behalf, dispatching them through <code>contracts.DB</code>. Because it
+lives under the module root, it <em>is</em> allowed to import <code>internal/storage</code>.
+</p>
+<pre><code><span class="tok-key">package</span> snapshots
+
+<span class="tok-key">type</span> <span class="tok-typ">Logger</span> <span class="tok-key">interface</span>{ <span class="tok-fn">Printf</span>(<span class="tok-typ">string</span>, ...<span class="tok-key">any</span>) }
+<span class="tok-key">type</span> <span class="tok-typ">Applicator</span> <span class="tok-key">interface</span>{ <span class="tok-fn">Apply</span>(message <span class="tok-key">any</span>) }
+
+<span class="tok-key">type</span> <span class="tok-typ">DomainInitializationReport</span> <span class="tok-key">struct</span> {
+    PreviousHighWatermark <span class="tok-typ">uint64</span>
+    NewHighWatermark      <span class="tok-typ">uint64</span>
+    EventsAppliedCount    <span class="tok-typ">uint64</span>
+    Error                 <span class="tok-typ">error</span>
+}
+
+<span class="tok-com">// InitializeDomain loads the latest snapshot from snapshotTable, applies it, then</span>
+<span class="tok-com">// loads and applies every event newer than the snapshot's high watermark.</span>
+<span class="tok-key">func</span> <span class="tok-fn">InitializeDomain</span>[<span class="tok-typ">S</span> <span class="tok-key">any</span>](
+    ctx context.<span class="tok-typ">Context</span>,
+    logger <span class="tok-typ">Logger</span>,
+    db contracts.<span class="tok-typ">DB</span>,
+    snapshotTable <span class="tok-typ">string</span>,
+    messageTypes <span class="tok-key">map</span>[<span class="tok-typ">string</span>]reflect.<span class="tok-typ">Type</span>, <span class="tok-com">// name → type, decodes events</span>
+    typeNames <span class="tok-key">map</span>[reflect.<span class="tok-typ">Type</span>]<span class="tok-typ">string</span>,    <span class="tok-com">// type → name, filters the IN clause</span>
+    domain <span class="tok-typ">Applicator</span>,
+    events ...<span class="tok-key">any</span>,                       <span class="tok-com">// sample instances of the event types to replay</span>
+) (result <span class="tok-typ">DomainInitializationReport</span>)
+
+<span class="tok-com">// LoadSnapshot decompresses (if gzip) and unmarshals a snapshot payload into S.</span>
+<span class="tok-key">func</span> <span class="tok-fn">LoadSnapshot</span>[<span class="tok-typ">S</span> <span class="tok-key">any</span>](
+    payload []<span class="tok-typ">byte</span>, contentEncoding <span class="tok-typ">string</span>, highWatermark <span class="tok-typ">uint64</span>, logger <span class="tok-typ">Logger</span>,
+) (snapshot <span class="tok-typ">S</span>, err <span class="tok-typ">error</span>)
+
+<span class="tok-com">// SaveSnapshot persists one snapshot row (thin wrapper over db.Handle so external</span>
+<span class="tok-com">// modules need not name the internal operation type).</span>
+<span class="tok-key">func</span> <span class="tok-fn">SaveSnapshot</span>(
+    ctx context.<span class="tok-typ">Context</span>, db contracts.<span class="tok-typ">DB</span>, tableName <span class="tok-typ">string</span>,
+    timestamp time.<span class="tok-typ">Time</span>, highWatermark <span class="tok-typ">uint64</span>, payload []<span class="tok-typ">byte</span>, contentType, contentEncoding <span class="tok-typ">string</span>,
+) <span class="tok-typ">error</span>
+
+<span class="tok-com">// LoadEventsSince loads, decodes, and returns events newer than highWatermark, for</span>
+<span class="tok-com">// callers (snapshot-inspect, snapshot-to-sqlite) that replay against a chosen snapshot.</span>
+<span class="tok-key">func</span> <span class="tok-fn">LoadEventsSince</span>(
+    ctx context.<span class="tok-typ">Context</span>, db contracts.<span class="tok-typ">DB</span>, highWatermark <span class="tok-typ">uint64</span>,
+    messageTypes <span class="tok-key">map</span>[<span class="tok-typ">string</span>]reflect.<span class="tok-typ">Type</span>, typeNames <span class="tok-key">map</span>[reflect.<span class="tok-typ">Type</span>]<span class="tok-typ">string</span>, events ...<span class="tok-key">any</span>,
+) (decoded []<span class="tok-key">any</span>, newHighWatermark <span class="tok-typ">uint64</span>, err <span class="tok-typ">error</span>)</code></pre>
+
+<div class="callout">
+  <span class="lbl">Why <code>SaveSnapshot</code> and <code>LoadEventsSince</code> become functions too</span>
+  Your item list names only <code>InitializeDomain</code> and <code>LoadSnapshot</code> as functions, with #3/#4/#5 as
+  mapper-handled operations. But once those operation structs are <code>internal</code>, <code>billing-context</code>
+  (a separate module) cannot construct them to hand to <code>db.Handle</code>. The <code>snapshots</code> package
+  therefore exposes thin wrappers as the public face of #3 and #5. These also remove the duplicated reflect/decode
+  loops currently copy-pasted across <code>snapshot-inspect</code> and <code>snapshot-to-sqlite</code>. Flag me if
+  you'd rather expose the operation structs directly from a non-internal package instead.
+</div>
+
+<h3>4 — Behavioral changes from generalizing</h3>
+<table>
+  <tr><th>Concern</th><th>Billing today</th><th>Generalized harness</th></tr>
+  <tr><td>Event filter</td><td><code>type LIKE 'billing:%' OR type IN (accounting:…)</code></td><td>Explicit <code>type IN (…)</code> built from the variadic event set. Callers must enumerate every event type to replay.</td></tr>
+  <tr><td>Snapshot table</td><td>Hard-coded <code>BillingSnapshots</code></td><td><code>TableName</code> argument (billing passes <code>"BillingSnapshots"</code>).</td></tr>
+  <tr><td>Read failure</td><td><code>reader.Read</code> <strong>panics</strong> inside the mapper</td><td><code>db.Handle</code> returns an <code>error</code>; <code>InitializeDomain</code> records it in <code>report.Error</code> and returns — no panic.</td></tr>
+  <tr><td>Snapshot column</td><td><code>created</code> set from <code>SaveSnapshot.Timestamp</code></td><td>Unchanged.</td></tr>
+</table>
+
+<h2>Trade-offs &amp; open questions</h2>
+<ul>
+  <li><strong>The <code>LIKE 'billing:%'</code> shortcut is gone.</strong> Billing relied on a prefix match plus a
+      short explicit list. The generalized form requires callers to pass the full set of event Go types. This is
+      more verbose but explicit and self-documenting, and it is the only domain-agnostic option. Billing's
+      <code>all.Messages</code> registry can enumerate them.</li>
+  <li><strong><code>LoadEventsSince</code> has no <code>TableName</code>.</strong> You scoped <code>TableName</code> to
+      the snapshot operations; events are read from the conventional <code>Messages</code> table that the rest of the
+      Mapper already targets. If a context stores events elsewhere this needs revisiting — easy to add later. Confirm
+      this is acceptable.</li>
+  <li><strong>Two mappers over one <code>*sql.DB</code>.</strong> Billing keeps its own mapper for its many
+      domain-specific reads; for snapshots/events it now constructs a <code>harness/v2/storage/mysql.Mapper</code>
+      over the same <code>*sql.DB</code> and passes it as <code>contracts.DB</code>. Both are single-goroutine
+      drivers, so coexistence is fine. (The billing migration is out of scope here — see below.)</li>
+  <li><strong><code>LoadSnapshot</code> signature changed from struct to primitives.</strong> Taking
+      <code>(payload, contentEncoding, highWatermark)</code> rather than the internal <code>LoadedSnapshot</code>
+      keeps that result type internal while letting external callers (who scan a row by hand) still call it. The
+      alternative — exporting a <code>LoadedSnapshot</code> DTO — is also viable; say the word.</li>
+  <li><strong>JSON v1 vs v2.</strong> <code>LoadSnapshot</code> in billing uses <code>encoding/json</code>;
+      <code>snapshot/main.go</code> marshals with <code>encoding/json/v2</code> behind a build tag. The moved
+      <code>LoadSnapshot</code> will use stdlib <code>encoding/json</code> (v1) for decode, which reads v2-written
+      JSON fine. Confirm harness should not take on the <code>jsonv2</code> goexperiment dependency.</li>
+  <li><strong>Scope of this proposal = harness only.</strong> The checklist below adds and tests the code in
+      <code>harness/v2</code>. Actually rewiring <code>billing-context</code>'s four call sites to consume it requires
+      a tagged harness release and is tracked as a follow-up, not implemented here.</li>
+</ul>
+
+<h2>Implementation checklist</h2>
+<p class="legend">TDD throughout: <span class="pill red">RED</span> write/adjust a failing test, <span class="pill green">GREEN</span> make it pass. DB-backed cases run under <code>make test.db</code> (excluded by <code>-short</code>); pure logic runs under <code>make test</code>.</p>
+
+<div class="phase">
+<h3>Phase A — Storage operations (internal/storage)</h3>
+<ul class="check">
+  <li class="done"><span class="pill red">RED</span> Add <code>SaveSnapshot</code>, <code>LoadLatestSnapshot</code>, <code>LoadedSnapshot</code>, <code>LoadEventsSince</code>, <code>Event</code> to <code>internal/storage/operations.go</code> with the fields shown above. (Compile-only; these are plain structs.)</li>
+  <li class="done">Confirm <code>go build ./internal/...</code> succeeds and no <code>database/sql</code> import leaked in.</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase B — Mapper: snapshot save/load <span class="pill green">DB-backed</span></h3>
+<ul class="check">
+  <li class="done"><span class="pill red">RED</span> New <code>storage/mysql/mapper_snapshots_test.go</code> gunit fixture: <code>TestSaveThenLoadLatestSnapshot</code> — <code>Handle</code> a <code>*SaveSnapshot{TableName:"Snapshots", …}</code> twice with ascending watermarks, then <code>Handle</code> a <code>*LoadLatestSnapshot{TableName:"Snapshots"}</code>; assert <code>Result.Found</code> and that it returns the highest-id row. Run <code>make test.db</code> → fails (cases unimplemented, hits <code>ErrUnsupportedOperation</code>).</li>
+  <li class="done"><span class="pill green">GREEN</span> Implement <code>saveSnapshot</code> + <code>loadLatestSnapshot</code> + the two <code>Handle</code> cases, with the <code>TableName</code> identifier validation + backtick quoting helper. <code>make test.db</code> → passes.</li>
+  <li class="done"><span class="pill red">RED</span> Add <code>TestLoadLatestSnapshotEmptyTableReportsNotFound</code> and <code>TestSnapshotRejectsInvalidTableName</code> (e.g. <code>"Snap; DROP"</code> → error, no query run). Implement validation to pass.</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase C — Mapper: events since <span class="pill green">DB-backed</span> (your turn — see below)</h3>
+<ul class="check">
+  <li class="done"><span class="pill red">RED</span> <code>TestLoadEventsSinceFiltersByTypeAndWatermark</code>: seed the <code>Messages</code> table with rows of several types across a watermark boundary; <code>Handle</code> a <code>*LoadEventsSince</code> carrying two sample event objects + a <code>TypeNames</code> map; assert only matching-type rows with <code>id &gt; HighWatermark</code> come back, in id order, and that <code>Result.NewHighWatermark</code> equals the last id.</li>
+  <li class="done"><span class="pill red">RED</span> <code>TestLoadEventsSinceEmptyTypeSet</code>: zero event objects ⇒ no rows (and no malformed <code>IN ()</code>).</li>
+  <li class="done"><span class="pill green">GREEN</span> Implement <code>loadEventsSince</code> + its <code>Handle</code> case (the part reserved for you).</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase D — The <code>snapshots</code> package (no DB)</h3>
+<ul class="check">
+  <li class="done"><span class="pill red">RED</span> <code>snapshots/snapshots_test.go</code> gunit fixture <code>TestLoadSnapshotGzipRoundTrip</code> / <code>TestLoadSnapshotPlainJSON</code>: gzip- and plain-encode a known struct, assert <code>LoadSnapshot[S]</code> returns it; assert a corrupt gzip payload returns a wrapped error.</li>
+  <li class="done"><span class="pill green">GREEN</span> Implement <code>LoadSnapshot[S]</code>, <code>Logger</code>, <code>Applicator</code>, <code>DomainInitializationReport</code>, and the sentinel errors (<code>errMissingSnapshot</code>, <code>errUnsupportedMessageType</code>).</li>
+  <li class="done"><span class="pill red">RED</span> <code>TestInitializeDomainAppliesSnapshotThenEvents</code> using a <strong>fake <code>contracts.DB</code></strong> that answers <code>*LoadLatestSnapshot</code> and <code>*LoadEventsSince</code> from in-memory fixtures, and a spy <code>Applicator</code> that records applied values; assert order (snapshot first, then events ascending), <code>EventsAppliedCount</code>, and watermarks.</li>
+  <li class="done"><span class="pill red">RED</span> <code>TestInitializeDomainMissingSnapshotReports</code> (Found=false ⇒ <code>report.Error == errMissingSnapshot</code>, no panic) and <code>TestInitializeDomainHandleErrorReported</code> (fake DB returns an error ⇒ surfaced in <code>report.Error</code>).</li>
+  <li class="done"><span class="pill green">GREEN</span> Implement <code>InitializeDomain[S]</code>, <code>SaveSnapshot</code>, and <code>LoadEventsSince</code> wrappers.</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase E — Full verification</h3>
+<ul class="check">
+  <li class="done"><code>make test</code> (twice: coverage + <code>-race</code>) green.</li>
+  <li class="done"><code>make test.db.local</code> green (spins MySQL, runs the DB-backed phases). <em>Ran <code>make test.db</code> against the already-running MySQL on :3306 instead — Docker <code>up --wait</code> would conflict on the bound port; mysql coverage 93.1% with <code>-race</code>.</em></li>
+  <li class="done"><code>make build</code> green; <code>go mod tidy</code> leaves <code>go.mod</code> clean.</li>
+  <li class="done">Skim public API doc comments on the <code>snapshots</code> package for first-time consumers.</li>
+</ul>
+</div>
+
+<h2 id="your-turn">Your turn — <code>loadEventsSince</code> in the Mapper</h2>
+<div class="callout you">
+  <span class="lbl">The piece reserved for you</span>
+  This is the semantic heart of the whole task: turning a variadic of Go event objects into the <code>type IN (…)</code>
+  filter. It is small, pure-ish, and has crisp test cases. Phase C's RED tests are written to drive it.
+</div>
+<p>Implement, on <code>storage/mysql.Mapper</code>:</p>
+<pre><code><span class="tok-key">func</span> (this *<span class="tok-typ">Mapper</span>) <span class="tok-fn">loadEventsSince</span>(ctx context.<span class="tok-typ">Context</span>, operation *storage.<span class="tok-typ">LoadEventsSince</span>) <span class="tok-typ">error</span></code></pre>
+<p>Behavior to build:</p>
+<ul>
+  <li>For each value in <code>operation.EventTypes</code>, resolve its canonical name via
+      <code>operation.TypeNames[reflect.TypeOf(value)]</code>. Collect the names (dedupe is a nice touch).</li>
+  <li>If no names resolve, return without querying and leave <code>Result</code> empty — never emit a malformed
+      <code>IN ()</code>.</li>
+  <li>Build <code>SELECT id, type, payload FROM Messages WHERE type IN (?, …) AND id &gt; ? ORDER BY id ASC</code>,
+      binding one <code>?</code> per resolved name plus <code>operation.HighWatermark</code> last. Reuse the pooled
+      <code>statement</code> buffer the way <code>markMessagesDispatched</code> does
+      (<code>this.statements.Get()</code> / <code>reset()</code> / <code>defer Put</code>).</li>
+  <li>Scan each row into <code>storage.Event{Type, Payload}</code>, append to <code>operation.Result.Events</code>, and
+      track <code>operation.Result.NewHighWatermark = id</code> as you go. Return <code>rows.Err()</code> at the end.</li>
+</ul>
+<p>Tests that must pass: <code>TestLoadEventsSinceFiltersByTypeAndWatermark</code> and
+<code>TestLoadEventsSinceEmptyTypeSet</code> (Phase C). Reference implementations to model the SQL/scan shape:
+<code>markMessagesDispatched</code> (IN-list building) and <code>loadUndispatchedPage</code> (row scan loop) in the
+same file.</p>
+
+<h2>Files touched</h2>
+<table>
+  <tr><th>File</th><th>Change</th></tr>
+  <tr><td><code>internal/storage/operations.go</code></td><td>+3 operation structs, +2 result structs</td></tr>
+  <tr><td><code>storage/mysql/mapper.go</code></td><td>+3 <code>Handle</code> cases, +3 methods, +table-name validation helper</td></tr>
+  <tr><td><code>storage/mysql/mapper_snapshots_test.go</code></td><td>NEW — DB-backed fixtures (Phases B &amp; C)</td></tr>
+  <tr><td><code>snapshots/snapshots.go</code></td><td>NEW — exported package (functions + interfaces + report + errors)</td></tr>
+  <tr><td><code>snapshots/snapshots_test.go</code></td><td>NEW — no-DB fixtures with fake <code>contracts.DB</code> (Phase D)</td></tr>
+</table>
+
+</div>
+</body>
+</html>

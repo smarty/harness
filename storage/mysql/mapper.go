@@ -7,6 +7,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"reflect"
+	"regexp"
+	"slices"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/generic"
@@ -54,6 +57,12 @@ func (this *Mapper) Handle(ctx context.Context, operation any) error {
 		return this.loadUndispatchedBounds(ctx, op)
 	case *storage.LoadUndispatchedPage:
 		return this.loadUndispatchedPage(ctx, op)
+	case *storage.SaveSnapshot:
+		return this.saveSnapshot(ctx, op)
+	case *storage.LoadLatestSnapshot:
+		return this.loadLatestSnapshot(ctx, op)
+	case *storage.LoadEventsSince:
+		return this.loadEventsSince(ctx, op)
 	default:
 		return storage.ErrUnsupportedOperation
 	}
@@ -215,9 +224,111 @@ func (this *Mapper) loadUndispatchedPage(ctx context.Context, operation *storage
 	return rows.Err()
 }
 
+func (this *Mapper) saveSnapshot(ctx context.Context, operation *storage.SaveSnapshot) error {
+	table, err := quoteTableName(operation.TableName)
+	if err != nil {
+		return err
+	}
+	query := fmt.Sprintf(
+		`INSERT INTO %s (created, high_watermark, payload, content_type, content_encoding) VALUES (?, ?, ?, ?, ?)`,
+		table)
+	if _, err := this.handle.ExecContext(ctx, query,
+		operation.Timestamp, operation.HighWatermark, operation.Payload,
+		operation.ContentType, operation.ContentEncoding); err != nil {
+		return fmt.Errorf("save snapshot: %w", err)
+	}
+	return nil
+}
+
+func (this *Mapper) loadLatestSnapshot(ctx context.Context, operation *storage.LoadLatestSnapshot) error {
+	table, err := quoteTableName(operation.TableName)
+	if err != nil {
+		return err
+	}
+	query := fmt.Sprintf(`
+		SELECT high_watermark, payload, content_type, content_encoding
+		  FROM %s
+		 ORDER BY id DESC
+		 LIMIT 1`, table)
+	var result storage.LoadedSnapshotResult
+	row := this.handle.QueryRowContext(ctx, query)
+	err = row.Scan(&result.HighWatermark, &result.Payload, &result.ContentType, &result.ContentEncoding)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	result.Found = true
+	operation.Result = result
+	return nil
+}
+
+func (this *Mapper) loadEventsSince(ctx context.Context, op *storage.LoadEventsSince) error {
+	statement := this.statements.Get()
+	defer this.statements.Put(statement)
+	statement.reset()
+
+	statement.text.WriteString(`
+		SELECT id, type, payload
+		  FROM Messages
+		 WHERE type IN (`,
+	)
+
+	for e, event := range op.Events {
+		name := op.TypeNames[reflect.TypeOf(event)]
+		if slices.Contains(statement.args, any(name)) {
+			continue
+		}
+		statement.args = append(statement.args, name)
+		statement.text.WriteString(`?`)
+		if e < len(op.Events)-1 {
+			statement.text.WriteString(`,`)
+		}
+	}
+	if len(statement.args) == 0 {
+		return errors.New("no valid event types provided")
+	}
+	statement.args = append(statement.args, op.HighWatermark)
+	statement.text.WriteString(`) AND id > ? ORDER BY id ASC`)
+
+	rows, err := this.handle.QueryContext(ctx, statement.text.String(), statement.args...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var highWatermark uint64
+		var event storage.Event
+		err = rows.Scan(&highWatermark, &event.Type, &event.Payload)
+		if err != nil {
+			return err
+		}
+		op.Result.NewHighWatermark = highWatermark
+		op.Result.Events = append(op.Result.Events, event)
+	}
+	return nil
+}
+
+// quoteTableName guards against SQL injection through interpolated table names:
+// table names cannot be bound as ? placeholders, so only a strict identifier is
+// accepted and it is wrapped in backticks before reaching the query string.
+func quoteTableName(name string) (string, error) {
+	if !tableNamePattern.MatchString(name) {
+		return "", fmt.Errorf("%w: %q", errInvalidTableName, name)
+	}
+	return fmt.Sprintf("`%s`", name), nil
+}
+func quote(value string) string {
+	return fmt.Sprintf("'%s'", value)
+}
+
 var (
-	errRowsAffected    = errors.New("the number of modified rows was not expected compared to the number of writes performed")
-	errIdentityFailure = errors.New("unable to determine the identity of the inserted row(s)")
+	errRowsAffected     = errors.New("the number of modified rows was not expected compared to the number of writes performed")
+	errIdentityFailure  = errors.New("unable to determine the identity of the inserted row(s)")
+	errInvalidTableName = errors.New("table name is not a valid SQL identifier")
+
+	tableNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 )
 
 const (
