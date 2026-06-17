@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"reflect"
-	"time"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/storage"
@@ -97,26 +96,6 @@ func InitializeDomain[S any](
 	logger.Printf("[INFO] initialized domain: applied %d event(s) through high watermark %d",
 		result.EventsAppliedCount, result.NewHighWatermark)
 	return result, nil
-}
-
-// SaveSnapshot persists one snapshot row (thin wrapper over db.Exec so external
-// modules need not name the internal operation type). The target table is
-// configured on the mysql.Mapper, not passed here.
-func SaveSnapshot(
-	ctx context.Context,
-	db contracts.Storage,
-	timestamp time.Time,
-	highWatermark uint64,
-	payload []byte,
-	contentType, contentEncoding string,
-) error {
-	return db.Exec(ctx, &storage.SaveSnapshot{
-		Timestamp:       timestamp,
-		HighWatermark:   highWatermark,
-		Payload:         payload,
-		ContentType:     contentType,
-		ContentEncoding: contentEncoding,
-	})
 }
 
 // LoadEventsSince loads, decodes, and returns events newer than highWatermark, for
