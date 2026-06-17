@@ -65,6 +65,8 @@ func (this *Mapper) Exec(ctx context.Context, operation any) error {
 		return this.saveSnapshot(ctx, op)
 	case *storage.LoadLatestSnapshot:
 		return this.loadLatestSnapshot(ctx, op)
+	case *storage.LoadSnapshot:
+		return this.loadSnapshot(ctx, op)
 	case *storage.LoadEventsSince:
 		return this.loadEventsSince(ctx, op)
 	default:
@@ -272,6 +274,29 @@ func (this *Mapper) loadLatestSnapshot(ctx context.Context, operation *storage.L
 		 LIMIT 1`, table)
 	var result storage.LoadedSnapshotResult
 	row := this.handle.QueryRowContext(ctx, query)
+	err = row.Scan(&result.HighWatermark, &result.Payload, &result.ContentType, &result.ContentEncoding)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	result.Found = true
+	operation.Result = result
+	return nil
+}
+
+func (this *Mapper) loadSnapshot(ctx context.Context, operation *storage.LoadSnapshot) error {
+	table, err := quoteTableName(this.snapshotsTable)
+	if err != nil {
+		return err
+	}
+	query := fmt.Sprintf(`
+		SELECT high_watermark, payload, content_type, content_encoding
+		  FROM %s
+		 WHERE id = ?`, table)
+	var result storage.LoadedSnapshotResult
+	row := this.handle.QueryRowContext(ctx, query, operation.ID)
 	err = row.Scan(&result.HighWatermark, &result.Payload, &result.ContentType, &result.ContentEncoding)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil

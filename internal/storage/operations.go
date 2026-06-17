@@ -45,6 +45,12 @@ type SaveSnapshot struct {
 }
 
 type (
+	// LoadSnapshot loads the snapshot row with the matching ID. The target table
+	// is configured on the mysql.Mapper (snapshotsTableName), not carried here.
+	LoadSnapshot struct {
+		ID     uint64
+		Result LoadedSnapshotResult // populated by the handler
+	}
 	// LoadLatestSnapshot loads the most recent snapshot row. The target table is
 	// configured on the mysql.Mapper (snapshotsTableName), not carried here.
 	LoadLatestSnapshot struct {

@@ -56,9 +56,43 @@ func (this *MapperFixture) TestSnapshotRejectsInvalidTableName() {
 	load := &storage.LoadLatestSnapshot{}
 	this.So(mapper.Exec(this.ctx, load), should.NOT.BeNil)
 
+	loadByID := &storage.LoadSnapshot{ID: 1}
+	this.So(mapper.Exec(this.ctx, loadByID), should.NOT.BeNil)
+
 	// The rejected save must not have written a row.
 	clean := this.loadLatestSnapshot()
 	this.So(clean.Result.Found, should.BeFalse)
+}
+
+func (this *MapperFixture) seedSnapshot(watermark uint64, payload string) uint64 {
+	result, err := this.handle.Exec(
+		`INSERT INTO Snapshots (created, high_watermark, payload, content_type, content_encoding) VALUES (?, ?, ?, ?, ?)`,
+		time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC), watermark, payload, "application/json", "gzip")
+	this.So(err, should.BeNil)
+	id, err := result.LastInsertId()
+	this.So(err, should.BeNil)
+	return uint64(id)
+}
+
+func (this *MapperFixture) TestLoadSnapshotByID() {
+	_ = this.seedSnapshot(10, `{"v":1}`)
+	id := this.seedSnapshot(20, `{"v":2}`)
+
+	op := &storage.LoadSnapshot{ID: id}
+	this.So(this.subject.Exec(this.ctx, op), should.BeNil)
+
+	this.So(op.Result.Found, should.BeTrue)
+	this.So(op.Result.HighWatermark, should.Equal, uint64(20))
+	this.So(op.Result.Payload, should.Equal, []byte(`{"v":2}`))
+	this.So(op.Result.ContentType, should.Equal, "application/json")
+	this.So(op.Result.ContentEncoding, should.Equal, "gzip")
+}
+
+func (this *MapperFixture) TestLoadSnapshotByIDMissingRowReportsNotFound() {
+	op := &storage.LoadSnapshot{ID: 404}
+	this.So(this.subject.Exec(this.ctx, op), should.BeNil)
+
+	this.So(op.Result.Found, should.BeFalse)
 }
 
 func (this *MapperFixture) seedMessage(messageType, payload string) uint64 {
