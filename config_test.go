@@ -35,7 +35,7 @@ func (this *ConfigFixture) TestNop() {
 	this.So(n.Serialize(nil, nil), should.BeNil)
 	this.So(n.ContentType(), should.BeEmpty)
 	this.So(n.Dispatch(nil), should.BeNil)
-	this.So(n.Handle(nil, nil), should.BeNil)
+	this.So(n.Exec(nil, nil), should.BeNil)
 }
 
 func (this *ConfigFixture) TestDefaultsPopulateCapacities() {

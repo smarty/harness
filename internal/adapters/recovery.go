@@ -16,15 +16,15 @@ import (
 // that predate startup — so rows persisted by live traffic during the recovery
 // window fall outside the boundary and are left for the live path. An empty
 // page means the backlog is exhausted and recovery is complete. The two SQL
-// queries are routed through the storage.DB seam.
+// queries are routed through the contracts.Storage seam.
 type Recovery struct {
-	db          contracts.DB
+	db          contracts.Storage
 	cursor      uint64 // advances past each successfully returned page; starts at MIN(id)-1 of the backlog
 	boundary    uint64 // MAX(id) of the backlog, snapshotted on the first call
 	snapshotted bool
 }
 
-func NewRecovery(db contracts.DB) *Recovery {
+func NewRecovery(db contracts.Storage) *Recovery {
 	return &Recovery{db: db}
 }
 
@@ -49,7 +49,7 @@ func (this *Recovery) Recover(ctx context.Context, limit int) ([]*contracts.Mess
 // written by live traffic.
 func (this *Recovery) snapshot(ctx context.Context) error {
 	op := new(storage.LoadUndispatchedBounds)
-	if err := this.db.Handle(ctx, op); err != nil {
+	if err := this.db.Exec(ctx, op); err != nil {
 		return err
 	}
 	if op.Found {
@@ -64,7 +64,7 @@ func (this *Recovery) page(ctx context.Context, limit int) ([]*contracts.Message
 	// NOTE: we're not going to worry about pooling/reusing this operation since
 	// recovery is a one-time procedure executed at startup.
 	op := &storage.LoadUndispatchedPage{AfterID: this.cursor, ThroughID: this.boundary, Limit: limit}
-	if err := this.db.Handle(ctx, op); err != nil {
+	if err := this.db.Exec(ctx, op); err != nil {
 		return nil, err
 	}
 	// Advance only after a clean scan: a failed page returns an error above and

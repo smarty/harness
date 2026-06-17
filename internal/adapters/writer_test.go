@@ -15,7 +15,7 @@ func TestWriterFixture(t *testing.T) {
 	gunit.Run(new(WriterFixture), t)
 }
 
-// WriterFixture exercises the Writer in isolation with a fake storage.DB; no
+// WriterFixture exercises the Writer in isolation with a fake contracts.Storage; no
 // real database is needed. The INSERT, ID assignment, transaction, and the
 // deprecated legacy hook are all covered by the Mapper's integration tests in
 // internal/storage/mysql.

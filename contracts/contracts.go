@@ -50,8 +50,8 @@ type (
 
 // Collaborator interfaces — callers supply real implementations via Options.*
 type (
-	DB interface {
-		Handle(ctx context.Context, operation any) error
+	Storage interface {
+		Exec(ctx context.Context, operation any) error
 	}
 
 	// Recoverer loads stored-but-undispatched messages at startup; the pipeline

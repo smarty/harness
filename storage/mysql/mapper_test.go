@@ -54,7 +54,7 @@ func (this *MapperFixture) Teardown() {
 }
 
 func (this *MapperFixture) TestHandle_UnsupportedOperation_ReturnsError() {
-	err := this.subject.Handle(this.ctx, "not a known operation")
+	err := this.subject.Exec(this.ctx, "not a known operation")
 
 	this.So(err, should.WrapError, storage.ErrUnsupportedOperation)
 }

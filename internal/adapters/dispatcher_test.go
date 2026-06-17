@@ -21,7 +21,7 @@ func TestDispatcherFixture(t *testing.T) {
 }
 
 // DispatcherFixture exercises the Dispatcher in isolation: it stands in as the
-// inner contracts.Dispatcher and supplies a fake storage.DB, so no real
+// inner contracts.Dispatcher and supplies a fake contracts.Storage, so no real
 // database is needed. The mark-dispatched SQL itself is covered by the Mapper's
 // integration tests in internal/storage/mysql.
 type DispatcherFixture struct {
@@ -138,7 +138,7 @@ type fakeDB struct {
 	err              error
 }
 
-func (this *fakeDB) Handle(ctx context.Context, operation any) error {
+func (this *fakeDB) Exec(ctx context.Context, operation any) error {
 	this.fixture.So(ctx.Value("testing"), should.Equal, this.expectedCtxValue)
 	this.operations = append(this.operations, operation)
 	return this.err

@@ -34,7 +34,7 @@ func (this *MapperFixture) markMessagesDispatched(ids ...uint64) error {
 	for _, id := range ids {
 		messages = append(messages, &contracts.Message{ID: id})
 	}
-	return this.subject.Handle(this.ctx, &storage.MarkMessagesDispatched{Messages: messages})
+	return this.subject.Exec(this.ctx, &storage.MarkMessagesDispatched{Messages: messages})
 }
 func (this *MapperFixture) TestMarkMessagesDispatched_SetsDispatchedTimestamp() {
 	id := this.seedUndispatched()

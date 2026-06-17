@@ -91,9 +91,9 @@ func (this *CoalesceFixture) Serialize(out io.Writer, _ any) error {
 }
 func (this *CoalesceFixture) ContentType() string { return "" }
 
-// Handle stands in for the storage.DB: it assigns ids on insert (so the
+// Execute stands in for the contracts.Storage: it assigns ids on insert (so the
 // Dispatcher's id!=0 guard is satisfied) and records each persisted unit's size.
-func (this *CoalesceFixture) Handle(_ context.Context, operation any) error {
+func (this *CoalesceFixture) Exec(_ context.Context, operation any) error {
 	if op, ok := operation.(*storage.InsertMessages); ok {
 		this.lock.Lock()
 		defer this.lock.Unlock()

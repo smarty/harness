@@ -10,7 +10,7 @@ import (
 
 func (this *MapperFixture) loadPage(afterID, throughID uint64, limit int) *storage.LoadUndispatchedPage {
 	op := &storage.LoadUndispatchedPage{AfterID: afterID, ThroughID: throughID, Limit: limit}
-	this.So(this.subject.Handle(this.ctx, op), should.BeNil)
+	this.So(this.subject.Exec(this.ctx, op), should.BeNil)
 	return op
 }
 

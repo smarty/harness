@@ -20,12 +20,12 @@ func (this *MapperFixture) saveSnapshot(watermark uint64, payload string) {
 		ContentType:     "application/json",
 		ContentEncoding: "gzip",
 	}
-	this.So(this.subject.Handle(this.ctx, op), should.BeNil)
+	this.So(this.subject.Exec(this.ctx, op), should.BeNil)
 }
 
 func (this *MapperFixture) loadLatestSnapshot() *storage.LoadLatestSnapshot {
 	op := &storage.LoadLatestSnapshot{TableName: "Snapshots"}
-	this.So(this.subject.Handle(this.ctx, op), should.BeNil)
+	this.So(this.subject.Exec(this.ctx, op), should.BeNil)
 	return op
 }
 
@@ -50,10 +50,10 @@ func (this *MapperFixture) TestLoadLatestSnapshotEmptyTableReportsNotFound() {
 
 func (this *MapperFixture) TestSnapshotRejectsInvalidTableName() {
 	save := &storage.SaveSnapshot{TableName: "Snap; DROP", Timestamp: time.Now(), Payload: []byte(`{}`)}
-	this.So(this.subject.Handle(this.ctx, save), should.NOT.BeNil)
+	this.So(this.subject.Exec(this.ctx, save), should.NOT.BeNil)
 
 	load := &storage.LoadLatestSnapshot{TableName: "Snap; DROP"}
-	this.So(this.subject.Handle(this.ctx, load), should.NOT.BeNil)
+	this.So(this.subject.Exec(this.ctx, load), should.NOT.BeNil)
 
 	// The rejected save must not have written a row.
 	clean := this.loadLatestSnapshot()
@@ -85,7 +85,7 @@ func (this *MapperFixture) TestLoadEventsSinceFiltersByTypeAndWatermark() {
 			reflect.TypeOf(sampleEventB{}): "event:b",
 		},
 	}
-	this.So(this.subject.Handle(this.ctx, op), should.BeNil)
+	this.So(this.subject.Exec(this.ctx, op), should.BeNil)
 
 	this.So(len(op.Result.Events), better.Equal, 2)
 	this.So(op.Result.Events[0], should.Equal, storage.Event{Type: "event:a", Payload: []byte(`{"x":1}`)})
@@ -102,7 +102,7 @@ func (this *MapperFixture) TestLoadEventsSinceEmptyTypeSet() {
 		TypeNames:     map[reflect.Type]string{},
 	}
 	// No types resolve: the handler errors out rather than emitting a malformed `IN ()`.
-	this.So(this.subject.Handle(this.ctx, op), should.NOT.BeNil)
+	this.So(this.subject.Exec(this.ctx, op), should.NOT.BeNil)
 
 	this.So(len(op.Result.Events), should.Equal, 0)
 	this.So(op.Result.NewHighWatermark, should.Equal, uint64(0))

@@ -204,4 +204,4 @@ func (nopCollaborator) Track(any)                                             {}
 func (nopCollaborator) Serialize(io.Writer, any) error                        { return nil }
 func (nopCollaborator) ContentType() string                                   { return "" }
 func (nopCollaborator) Dispatch(context.Context, ...*contracts.Message) error { return nil }
-func (nopCollaborator) Handle(ctx context.Context, operation any) error       { return nil }
+func (nopCollaborator) Exec(ctx context.Context, operation any) error         { return nil }

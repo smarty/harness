@@ -16,7 +16,7 @@ func TestRecoveryFixture(t *testing.T) {
 }
 
 // RecoveryFixture exercises the Recovery cursor logic in isolation against a
-// fake storage.DB; no real database is needed. The two SQL queries themselves
+// fake contracts.Storage; no real database is needed. The two SQL queries themselves
 // (bounds + windowed page) are covered by the Mapper's integration tests in
 // internal/storage/mysql.
 type RecoveryFixture struct {
@@ -186,7 +186,7 @@ type fakeRecoveryDB struct {
 	lastPage    storage.LoadUndispatchedPage
 }
 
-func (this *fakeRecoveryDB) Handle(ctx context.Context, operation any) error {
+func (this *fakeRecoveryDB) Exec(ctx context.Context, operation any) error {
 	this.fixture.So(ctx.Value("testing"), should.Equal, this.expectedCtxValue)
 	switch op := operation.(type) {
 	case *storage.LoadUndispatchedBounds:

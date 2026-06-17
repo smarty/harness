@@ -75,9 +75,9 @@ func (this *AbandonmentFixture) Serialize(out io.Writer, _ any) error {
 func (this *AbandonmentFixture) ContentType() string { return "" }
 func (this *AbandonmentFixture) Track(any)           {}
 
-// Handle stands in for the storage.DB: the insert never succeeds, simulating a
+// Execute stands in for the contracts.Storage: the insert never succeeds, simulating a
 // persistently unavailable database so the blocked Handle caller is abandoned.
-func (this *AbandonmentFixture) Handle(_ context.Context, operation any) error {
+func (this *AbandonmentFixture) Exec(_ context.Context, operation any) error {
 	if _, ok := operation.(*storage.InsertMessages); ok {
 		this.firstWrite.Do(func() { close(this.writeAttempts) })
 		return errors.New("database unavailable")

@@ -9,7 +9,7 @@ import (
 
 func (this *MapperFixture) loadBounds() *storage.LoadUndispatchedBounds {
 	op := new(storage.LoadUndispatchedBounds)
-	this.So(this.subject.Handle(this.ctx, op), should.BeNil)
+	this.So(this.subject.Exec(this.ctx, op), should.BeNil)
 	return op
 }
 

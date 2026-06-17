@@ -29,7 +29,7 @@ func insertMessage(value any, typeName string) *contracts.Message {
 }
 
 func (this *MapperFixture) insert(messages ...*contracts.Message) error {
-	return this.subject.Handle(this.ctx, &storage.InsertMessages{Messages: messages})
+	return this.subject.Exec(this.ctx, &storage.InsertMessages{Messages: messages})
 }
 
 func (this *MapperFixture) TestInsert_PersistsRowAndAssignsID() {
@@ -74,7 +74,7 @@ func (this *MapperFixture) TestInsert_LegacyWrite_ReceivesValuesAndCommitsInSame
 		})
 	message := insertMessage(event, "order-received")
 
-	err := mapper.Handle(this.ctx, &storage.InsertMessages{Messages: []*contracts.Message{message}})
+	err := mapper.Exec(this.ctx, &storage.InsertMessages{Messages: []*contracts.Message{message}})
 
 	this.So(err, should.BeNil)
 	this.So(gotValues, should.Equal, []any{event})
@@ -87,7 +87,7 @@ func (this *MapperFixture) TestInsert_LegacyWritePanic_RollsBackInsert() {
 		func(context.Context, *sql.Tx, ...any) { panic("boom") })
 	message := insertMessage(insertEvent{Order: 1}, "order-received")
 
-	err := mapper.Handle(this.ctx, &storage.InsertMessages{Messages: []*contracts.Message{message}})
+	err := mapper.Exec(this.ctx, &storage.InsertMessages{Messages: []*contracts.Message{message}})
 
 	this.So(err, should.NOT.BeNil)
 	this.So(this.countMessages(), should.Equal, 0)
@@ -159,7 +159,7 @@ func (this *MapperFixture) runMapper(mapperID, batches, perBatch int) (results [
 			event := insertEvent{Mapper: mapperID, Order: batch*perBatch + m}
 			messages = append(messages, insertMessage(event, "order-received"))
 		}
-		if err := mapper.Handle(this.ctx, &storage.InsertMessages{Messages: messages}); err != nil {
+		if err := mapper.Exec(this.ctx, &storage.InsertMessages{Messages: messages}); err != nil {
 			return nil, err
 		}
 		for _, message := range messages {

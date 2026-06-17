@@ -36,9 +36,9 @@ type PoolHygieneFixture struct {
 	written   []string
 }
 
-// Handle stands in for the storage.DB: it assigns ids on insert (so the
+// Execute stands in for the contracts.Storage: it assigns ids on insert (so the
 // Dispatcher's id!=0 guard is satisfied) and records each persisted message's Type.
-func (this *PoolHygieneFixture) Handle(_ context.Context, operation any) error {
+func (this *PoolHygieneFixture) Exec(_ context.Context, operation any) error {
 	if op, ok := operation.(*storage.InsertMessages); ok {
 		this.writeLock.Lock()
 		defer this.writeLock.Unlock()

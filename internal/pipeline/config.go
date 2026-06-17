@@ -11,7 +11,7 @@ import (
 
 type Configuration struct {
 	Monitor                contracts.Monitor
-	Storage                contracts.DB
+	Storage                contracts.Storage
 	Serializer             contracts.Serializer
 	Dispatcher             contracts.Dispatcher
 	MessageTypes           map[reflect.Type]string

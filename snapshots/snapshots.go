@@ -1,7 +1,7 @@
 // Package snapshots provides domain-agnostic snapshot and event-replay plumbing
 // for store-and-forward contexts built on harness/v2. It is the only exported
 // surface for snapshot work: it constructs the (internal) storage operations on
-// the caller's behalf and dispatches them through a contracts.DB.
+// the caller's behalf and dispatches them through a contracts.Storage.
 package snapshots
 
 import (
@@ -59,7 +59,7 @@ func LoadSnapshot[S any](payload []byte, contentEncoding string, highWatermark u
 func InitializeDomain[S any](
 	ctx context.Context,
 	logger Logger,
-	db contracts.DB,
+	db contracts.Storage,
 	snapshotTable string,
 	messageTypes map[string]reflect.Type,
 	typeNames map[reflect.Type]string,
@@ -67,7 +67,7 @@ func InitializeDomain[S any](
 	events ...any,
 ) (result DomainInitializationReport) {
 	latest := &storage.LoadLatestSnapshot{TableName: snapshotTable}
-	if err := db.Handle(ctx, latest); err != nil {
+	if err := db.Exec(ctx, latest); err != nil {
 		result.Error = err
 		return result
 	}
@@ -104,10 +104,10 @@ func InitializeDomain[S any](
 // SaveSnapshot persists one snapshot row (thin wrapper over db.Handle so external
 // modules need not name the internal operation type).
 func SaveSnapshot(
-	ctx context.Context, db contracts.DB, tableName string,
+	ctx context.Context, db contracts.Storage, tableName string,
 	timestamp time.Time, highWatermark uint64, payload []byte, contentType, contentEncoding string,
 ) error {
-	return db.Handle(ctx, &storage.SaveSnapshot{
+	return db.Exec(ctx, &storage.SaveSnapshot{
 		TableName:       tableName,
 		Timestamp:       timestamp,
 		HighWatermark:   highWatermark,
@@ -120,7 +120,7 @@ func SaveSnapshot(
 // LoadEventsSince loads, decodes, and returns events newer than highWatermark, for
 // callers (snapshot-inspect, snapshot-to-sqlite) that replay against a chosen snapshot.
 func LoadEventsSince(
-	ctx context.Context, db contracts.DB, highWatermark uint64,
+	ctx context.Context, db contracts.Storage, highWatermark uint64,
 	messageTypes map[string]reflect.Type, typeNames map[reflect.Type]string, events ...any,
 ) (decoded []any, newHighWatermark uint64, err error) {
 	operation := &storage.LoadEventsSince{
@@ -128,7 +128,7 @@ func LoadEventsSince(
 		Events:        events,
 		TypeNames:     typeNames,
 	}
-	if err = db.Handle(ctx, operation); err != nil {
+	if err = db.Exec(ctx, operation); err != nil {
 		return nil, 0, err
 	}
 	decoded, err = decodeEvents(operation.Result.Events, messageTypes)

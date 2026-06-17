@@ -81,9 +81,9 @@ func (this *ShutdownUnwedgeFixture) Dispatch(context.Context, ...*contracts.Mess
 	return nil
 }
 
-// Handle stands in for the storage.DB: it assigns ids on insert so the two
+// Execute stands in for the contracts.Storage: it assigns ids on insert so the two
 // accepted batches dispatch cleanly once the wedge is released at shutdown.
-func (this *ShutdownUnwedgeFixture) Handle(_ context.Context, operation any) error {
+func (this *ShutdownUnwedgeFixture) Exec(_ context.Context, operation any) error {
 	if op, ok := operation.(*storage.InsertMessages); ok {
 		this.nextID = assignTestIDs(this.nextID, op.Messages)
 	}

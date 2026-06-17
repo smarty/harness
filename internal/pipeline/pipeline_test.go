@@ -91,9 +91,9 @@ func (this *PipelineFixture) Serialize(out io.Writer, _ any) error {
 
 func (this *PipelineFixture) ContentType() string { return "" }
 
-// Handle stands in for the storage.DB: it assigns ids on insert (so the
+// Execute stands in for the contracts.Storage: it assigns ids on insert (so the
 // Dispatcher's id!=0 guard is satisfied) and captures each persisted batch.
-func (this *PipelineFixture) Handle(ctx context.Context, operation any) error {
+func (this *PipelineFixture) Exec(ctx context.Context, operation any) error {
 	this.So(ctx.Value("testing"), should.Equal, this.Name())
 	if op, ok := operation.(*storage.InsertMessages); ok {
 		this.writeLock.Lock()

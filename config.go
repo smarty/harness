@@ -107,7 +107,7 @@ func (singleton) Monitor(value contracts.Monitor) option {
 
 // Storage uses the provided db to build and set the Recovery, Writer,
 // and Dispatcher components.
-func (singleton) Storage(db contracts.DB) option {
+func (singleton) Storage(db contracts.Storage) option {
 	return func(this *pipeline.Configuration) { this.Storage = db }
 }
 
@@ -176,4 +176,4 @@ func (nop) Track(any)                                             {}
 func (nop) Serialize(io.Writer, any) error                        { return nil }
 func (nop) ContentType() string                                   { return "" }
 func (nop) Dispatch(context.Context, ...*contracts.Message) error { return nil }
-func (nop) Handle(context.Context, any) error                     { return nil } // TODO: rename storage method to Exec
+func (nop) Exec(context.Context, any) error                       { return nil }

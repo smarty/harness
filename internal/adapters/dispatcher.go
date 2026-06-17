@@ -14,19 +14,19 @@ import (
 )
 
 // Dispatcher publishes a batch through its inner dispatcher and then asks the
-// storage.DB to mark the batch dispatched. It holds a reused buffer for the
+// contracts.Storage to mark the batch dispatched. It holds a reused buffer for the
 // storage operation and is therefore not safe for concurrent use, so a Dispatcher
 // must be driven from a single goroutine (as the pipeline does).
 type Dispatcher struct {
 	inner contracts.Dispatcher
-	db    contracts.DB
+	db    contracts.Storage
 	op    *storage.MarkMessagesDispatched
 }
 
 // NewDispatcher builds a dispatcher. The inner dispatcher is the caller's
 // opportunity to provide an adapter layer to convert between our *contracts.Message
 // to their own preferred dispatch type (perhaps a library for RabbitMQ, or Kafka, etc.).
-func NewDispatcher(inner contracts.Dispatcher, db contracts.DB) *Dispatcher {
+func NewDispatcher(inner contracts.Dispatcher, db contracts.Storage) *Dispatcher {
 	return &Dispatcher{
 		inner: inner,
 		db:    db,
@@ -53,7 +53,7 @@ func (this *Dispatcher) Dispatch(ctx context.Context, messages ...*contracts.Mes
 		return err
 	}
 	this.op.Messages = messages
-	return this.db.Handle(ctx, this.op)
+	return this.db.Exec(ctx, this.op)
 }
 
 var errUnassignedID = errors.New("cannot mark a message dispatched: message has no assigned id (id=0); the Writer must assign positive ids")

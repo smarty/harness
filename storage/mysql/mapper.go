@@ -47,7 +47,7 @@ func (this *Mapper) WithLegacyWrite(legacyWrite func(context.Context, *sql.Tx, .
 	return this
 }
 
-func (this *Mapper) Handle(ctx context.Context, operation any) error {
+func (this *Mapper) Exec(ctx context.Context, operation any) error {
 	switch op := operation.(type) {
 	case *storage.MarkMessagesDispatched:
 		return this.markMessagesDispatched(ctx, op)

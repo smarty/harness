@@ -99,7 +99,7 @@ type fakeDB struct {
 	err              error
 }
 
-func (this *fakeDB) Handle(_ context.Context, operation any) error {
+func (this *fakeDB) Exec(_ context.Context, operation any) error {
 	if this.err != nil {
 		return this.err
 	}
