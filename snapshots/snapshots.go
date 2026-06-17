@@ -39,7 +39,7 @@ type DomainInitializationReport struct {
 }
 
 // LoadSnapshot decompresses (if gzip) and unmarshals a snapshot payload into S.
-func LoadSnapshot[S any](payload []byte, contentEncoding string, highWatermark uint64, logger logger) (snapshot S, err error) {
+func LoadSnapshot[S any](logger logger, payload []byte, contentEncoding string, highWatermark uint64) (snapshot S, err error) {
 	if contentEncoding == "gzip" {
 		payload, err = gunzip(payload)
 		if err != nil {
@@ -75,7 +75,7 @@ func InitializeDomain[S any](
 	if !latest.Result.Found {
 		return result, errMissingSnapshot
 	}
-	snapshot, err := LoadSnapshot[S](latest.Result.Payload, latest.Result.ContentEncoding, latest.Result.HighWatermark, logger)
+	snapshot, err := LoadSnapshot[S](logger, latest.Result.Payload, latest.Result.ContentEncoding, latest.Result.HighWatermark)
 	if err != nil {
 		return result, err
 	}
@@ -102,8 +102,13 @@ func InitializeDomain[S any](
 // SaveSnapshot persists one snapshot row (thin wrapper over db.Handle so external
 // modules need not name the internal operation type).
 func SaveSnapshot(
-	ctx context.Context, db contracts.Storage, tableName string,
-	timestamp time.Time, highWatermark uint64, payload []byte, contentType, contentEncoding string,
+	ctx context.Context,
+	db contracts.Storage,
+	tableName string,
+	timestamp time.Time,
+	highWatermark uint64,
+	payload []byte,
+	contentType, contentEncoding string,
 ) error {
 	return db.Exec(ctx, &storage.SaveSnapshot{
 		TableName:       tableName,
@@ -118,9 +123,17 @@ func SaveSnapshot(
 // LoadEventsSince loads, decodes, and returns events newer than highWatermark, for
 // callers (snapshot-inspect, snapshot-to-sqlite) that replay against a chosen snapshot.
 func LoadEventsSince(
-	ctx context.Context, db contracts.Storage, highWatermark uint64,
-	messageTypes map[string]reflect.Type, typeNames map[reflect.Type]string, events ...any,
-) (decoded []any, newHighWatermark uint64, err error) {
+	ctx context.Context,
+	db contracts.Storage,
+	highWatermark uint64,
+	messageTypes map[string]reflect.Type,
+	typeNames map[reflect.Type]string,
+	events ...any,
+) (
+	decoded []any,
+	newHighWatermark uint64,
+	err error,
+) {
 	operation := &storage.LoadEventsSince{
 		HighWatermark: highWatermark,
 		Events:        events,

@@ -37,7 +37,7 @@ func (this *SnapshotsFixture) TestLoadSnapshotPlainJSON() {
 	payload, err := json.Marshal(original)
 	this.So(err, should.BeNil)
 
-	loaded, err := LoadSnapshot[sampleSnapshot](payload, "", 42, this)
+	loaded, err := LoadSnapshot[sampleSnapshot](this, payload, "", 42)
 
 	this.So(err, should.BeNil)
 	this.So(loaded, should.Equal, original)
@@ -48,14 +48,14 @@ func (this *SnapshotsFixture) TestLoadSnapshotGzipRoundTrip() {
 	raw, err := json.Marshal(original)
 	this.So(err, should.BeNil)
 
-	loaded, err := LoadSnapshot[sampleSnapshot](gzipBytes(raw), "gzip", 99, this)
+	loaded, err := LoadSnapshot[sampleSnapshot](this, gzipBytes(raw), "gzip", 99)
 
 	this.So(err, should.BeNil)
 	this.So(loaded, should.Equal, original)
 }
 
 func (this *SnapshotsFixture) TestLoadSnapshotCorruptGzipReturnsError() {
-	loaded, err := LoadSnapshot[sampleSnapshot]([]byte("this is not gzip"), "gzip", 1, this)
+	loaded, err := LoadSnapshot[sampleSnapshot](this, []byte("this is not gzip"), "gzip", 1)
 
 	this.So(err, should.NOT.BeNil)
 	this.So(loaded, should.Equal, sampleSnapshot{})
