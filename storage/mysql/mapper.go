@@ -319,9 +319,6 @@ func quoteTableName(name string) (string, error) {
 	}
 	return fmt.Sprintf("`%s`", name), nil
 }
-func quote(value string) string {
-	return fmt.Sprintf("'%s'", value)
-}
 
 var (
 	errRowsAffected     = errors.New("the number of modified rows was not expected compared to the number of writes performed")
