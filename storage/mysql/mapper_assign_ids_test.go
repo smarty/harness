@@ -20,7 +20,7 @@ type AssignIDsFixture struct {
 }
 
 func (this *AssignIDsFixture) mapper(stride uint64) *Mapper {
-	return NewMapper(nil, stride)
+	return NewMapper(nil, stride, "Snapshots", "Messages")
 }
 func (this *AssignIDsFixture) messages(count int) (results []*contracts.Message) {
 	for range count {

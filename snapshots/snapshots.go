@@ -53,13 +53,13 @@ func PopulateSnapshot[S any](logger logger, payload []byte, contentEncoding stri
 	return snapshot, nil
 }
 
-// InitializeDomain loads the latest snapshot from snapshotTable, applies it, then
-// loads and applies every event newer than the snapshot's high watermark.
+// InitializeDomain loads the latest snapshot (from the snapshot table configured
+// on the mysql.Mapper), applies it, then loads and applies every event newer than
+// the snapshot's high watermark.
 func InitializeDomain[S any](
 	ctx context.Context,
 	logger logger,
 	db contracts.Storage,
-	snapshotTable string,
 	messageTypes map[string]reflect.Type,
 	typeNames map[reflect.Type]string,
 	domain applicator,
@@ -68,7 +68,7 @@ func InitializeDomain[S any](
 	result DomainInitializationReport,
 	err error,
 ) {
-	latest := &storage.LoadLatestSnapshot{TableName: snapshotTable}
+	latest := &storage.LoadLatestSnapshot{}
 	if err := db.Exec(ctx, latest); err != nil {
 		return result, err
 	}
@@ -99,19 +99,18 @@ func InitializeDomain[S any](
 	return result, nil
 }
 
-// SaveSnapshot persists one snapshot row (thin wrapper over db.Handle so external
-// modules need not name the internal operation type).
+// SaveSnapshot persists one snapshot row (thin wrapper over db.Exec so external
+// modules need not name the internal operation type). The target table is
+// configured on the mysql.Mapper, not passed here.
 func SaveSnapshot(
 	ctx context.Context,
 	db contracts.Storage,
-	tableName string,
 	timestamp time.Time,
 	highWatermark uint64,
 	payload []byte,
 	contentType, contentEncoding string,
 ) error {
 	return db.Exec(ctx, &storage.SaveSnapshot{
-		TableName:       tableName,
 		Timestamp:       timestamp,
 		HighWatermark:   highWatermark,
 		Payload:         payload,

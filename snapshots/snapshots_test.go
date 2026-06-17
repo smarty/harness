@@ -138,7 +138,7 @@ func (this *SnapshotsFixture) TestInitializeDomainAppliesSnapshotThenEvents() {
 	spy := &spyApplicator{}
 
 	report, err := InitializeDomain[sampleSnapshot](
-		this.Context(), this, db, "Snapshots", messageTypes(), typeNames(), spy,
+		this.Context(), this, db, messageTypes(), typeNames(), spy,
 		orderPlaced{}, orderShipped{},
 	)
 
@@ -158,7 +158,7 @@ func (this *SnapshotsFixture) TestInitializeDomainMissingSnapshotReports() {
 	spy := &spyApplicator{}
 
 	report, err := InitializeDomain[sampleSnapshot](
-		this.Context(), this, db, "Snapshots", messageTypes(), typeNames(), spy,
+		this.Context(), this, db, messageTypes(), typeNames(), spy,
 		orderPlaced{},
 	)
 
@@ -173,7 +173,7 @@ func (this *SnapshotsFixture) TestInitializeDomainHandleErrorReported() {
 	spy := &spyApplicator{}
 
 	_, err := InitializeDomain[sampleSnapshot](
-		this.Context(), this, db, "Snapshots", messageTypes(), typeNames(), spy,
+		this.Context(), this, db, messageTypes(), typeNames(), spy,
 		orderPlaced{},
 	)
 

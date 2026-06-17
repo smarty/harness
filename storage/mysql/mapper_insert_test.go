@@ -56,6 +56,17 @@ func (this *MapperFixture) TestInsert_MultipleRows_AssignsStridedIDsMatchingRows
 	this.So(this.rowType(second.ID), should.Equal, "order-approved")
 }
 
+func (this *MapperFixture) TestInsert_InvalidMessagesTableName_Rejected() {
+	mapper := NewMapper(this.handle, this.stride, "Snapshots", "Msg; DROP")
+
+	err := mapper.Exec(this.ctx, &storage.InsertMessages{
+		Messages: []*contracts.Message{insertMessage(insertEvent{Order: 1}, "order-received")},
+	})
+
+	this.So(err, should.NOT.BeNil)
+	this.So(this.countMessages(), should.Equal, 0)
+}
+
 func (this *MapperFixture) TestInsert_NoMessages_NoOp() {
 	err := this.insert()
 
@@ -66,7 +77,7 @@ func (this *MapperFixture) TestInsert_NoMessages_NoOp() {
 func (this *MapperFixture) TestInsert_LegacyWrite_ReceivesValuesAndCommitsInSameTransaction() {
 	var gotValues []any
 	event := insertEvent{Order: 7}
-	mapper := NewMapper(this.handle, this.stride).WithLegacyWrite(
+	mapper := NewMapper(this.handle, this.stride, "Snapshots", "Messages").WithLegacyWrite(
 		func(ctx context.Context, tx *sql.Tx, values ...any) {
 			gotValues = values
 			_, err := tx.ExecContext(ctx, `UPDATE Messages SET type = 'touched-by-legacy'`)
@@ -83,7 +94,7 @@ func (this *MapperFixture) TestInsert_LegacyWrite_ReceivesValuesAndCommitsInSame
 }
 
 func (this *MapperFixture) TestInsert_LegacyWritePanic_RollsBackInsert() {
-	mapper := NewMapper(this.handle, this.stride).WithLegacyWrite(
+	mapper := NewMapper(this.handle, this.stride, "Snapshots", "Messages").WithLegacyWrite(
 		func(context.Context, *sql.Tx, ...any) { panic("boom") })
 	message := insertMessage(insertEvent{Order: 1}, "order-received")
 
@@ -152,7 +163,7 @@ func (this *MapperFixture) TestConcurrentInserts_AssignedIDsMatchActualRows() {
 }
 
 func (this *MapperFixture) runMapper(mapperID, batches, perBatch int) (results []writeRecord, err error) {
-	mapper := NewMapper(this.handle, this.stride)
+	mapper := NewMapper(this.handle, this.stride, "Snapshots", "Messages")
 	for batch := range batches {
 		messages := make([]*contracts.Message, 0, perBatch)
 		for m := range perBatch {

@@ -18,20 +18,24 @@ import (
 
 // Mapper leverages a pool of re-usable statement buffers and is safe for concurrent use.
 type Mapper struct {
-	handle       *sql.DB
-	stride       uint64
-	statements   *generic.PoolT[*statement]
-	legacyWrite  func(context.Context, *sql.Tx, ...any) // Deprecated; never nil — no-op default
-	legacyWrites []any                                  // Deprecated
+	handle         *sql.DB
+	stride         uint64
+	snapshotsTable string
+	messagesTable  string
+	statements     *generic.PoolT[*statement]
+	legacyWrite    func(context.Context, *sql.Tx, ...any) // Deprecated; never nil — no-op default
+	legacyWrites   []any                                  // Deprecated
 }
 
-func NewMapper(handle *sql.DB, stride uint64) *Mapper {
+func NewMapper(handle *sql.DB, stride uint64, snapshotsTableName, messagesTableName string) *Mapper {
 	return &Mapper{
-		handle:       handle,
-		stride:       cmp.Or(stride, 1),
-		statements:   generic.NewPoolT(newStatement),
-		legacyWrite:  func(context.Context, *sql.Tx, ...any) {}, // no-op until overridden
-		legacyWrites: make([]any, 0, legacyWritesBufferCapacity),
+		handle:         handle,
+		stride:         cmp.Or(stride, 1),
+		snapshotsTable: snapshotsTableName,
+		messagesTable:  messagesTableName,
+		statements:     generic.NewPoolT(newStatement),
+		legacyWrite:    func(context.Context, *sql.Tx, ...any) {}, // no-op until overridden
+		legacyWrites:   make([]any, 0, legacyWritesBufferCapacity),
 	}
 }
 
@@ -102,10 +106,14 @@ func (this *Mapper) performLegacyWrite(ctx context.Context, tx *sql.Tx, operatio
 	this.legacyWrite(ctx, tx, this.legacyWrites...)
 }
 func (this *Mapper) insert(ctx context.Context, tx *sql.Tx, messages []*contracts.Message) error {
+	table, err := quoteTableName(this.messagesTable)
+	if err != nil {
+		return err
+	}
 	statement := this.statements.Get()
 	defer this.statements.Put(statement)
 	statement.reset()
-	statement.text.WriteString(`INSERT INTO Messages (type, payload) VALUES `)
+	statement.text.WriteString(fmt.Sprintf(`INSERT INTO %s (type, payload) VALUES `, table))
 	for i, message := range messages {
 		if i > 0 {
 			statement.text.WriteString(`,`)
@@ -151,15 +159,19 @@ func (this *Mapper) assignIDs(messages []*contracts.Message, affected, first int
 }
 
 func (this *Mapper) markMessagesDispatched(ctx context.Context, operation *storage.MarkMessagesDispatched) error {
+	table, err := quoteTableName(this.messagesTable)
+	if err != nil {
+		return err
+	}
 	statement := this.statements.Get()
 	defer this.statements.Put(statement)
 	statement.reset()
 
-	statement.text.WriteString(`
-		UPDATE Messages
+	statement.text.WriteString(fmt.Sprintf(`
+		UPDATE %s
 		   SET dispatched = NOW(3)
 		 WHERE dispatched IS NULL
-		   AND id IN (`)
+		   AND id IN (`, table))
 	for i, message := range operation.Messages {
 		if i > 0 {
 			statement.text.WriteString(`,`)
@@ -175,11 +187,15 @@ func (this *Mapper) markMessagesDispatched(ctx context.Context, operation *stora
 }
 
 func (this *Mapper) loadUndispatchedBounds(ctx context.Context, operation *storage.LoadUndispatchedBounds) error {
+	table, err := quoteTableName(this.messagesTable)
+	if err != nil {
+		return err
+	}
 	var lo, hi sql.NullInt64
-	row := this.handle.QueryRowContext(ctx, `
+	row := this.handle.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT MIN(id), MAX(id)
-		  FROM Messages
-		 WHERE dispatched IS NULL`)
+		  FROM %s
+		 WHERE dispatched IS NULL`, table))
 	if err := row.Scan(&lo, &hi); err != nil {
 		return err
 	}
@@ -190,14 +206,18 @@ func (this *Mapper) loadUndispatchedBounds(ctx context.Context, operation *stora
 }
 
 func (this *Mapper) loadUndispatchedPage(ctx context.Context, operation *storage.LoadUndispatchedPage) error {
-	rows, err := this.handle.QueryContext(ctx, `
+	table, err := quoteTableName(this.messagesTable)
+	if err != nil {
+		return err
+	}
+	rows, err := this.handle.QueryContext(ctx, fmt.Sprintf(`
 		SELECT id, type, payload
-		  FROM Messages
+		  FROM %s
 		 WHERE dispatched IS NULL
 		   AND id > ?
 		   AND id <= ?
 		 ORDER BY id
-		 LIMIT ?`, operation.AfterID, operation.ThroughID, operation.Limit)
+		 LIMIT ?`, table), operation.AfterID, operation.ThroughID, operation.Limit)
 	if err != nil {
 		return err
 	}
@@ -225,7 +245,7 @@ func (this *Mapper) loadUndispatchedPage(ctx context.Context, operation *storage
 }
 
 func (this *Mapper) saveSnapshot(ctx context.Context, operation *storage.SaveSnapshot) error {
-	table, err := quoteTableName(operation.TableName)
+	table, err := quoteTableName(this.snapshotsTable)
 	if err != nil {
 		return err
 	}
@@ -241,7 +261,7 @@ func (this *Mapper) saveSnapshot(ctx context.Context, operation *storage.SaveSna
 }
 
 func (this *Mapper) loadLatestSnapshot(ctx context.Context, operation *storage.LoadLatestSnapshot) error {
-	table, err := quoteTableName(operation.TableName)
+	table, err := quoteTableName(this.snapshotsTable)
 	if err != nil {
 		return err
 	}
@@ -265,14 +285,18 @@ func (this *Mapper) loadLatestSnapshot(ctx context.Context, operation *storage.L
 }
 
 func (this *Mapper) loadEventsSince(ctx context.Context, op *storage.LoadEventsSince) error {
+	table, err := quoteTableName(this.messagesTable)
+	if err != nil {
+		return err
+	}
 	statement := this.statements.Get()
 	defer this.statements.Put(statement)
 	statement.reset()
 
-	statement.text.WriteString(`
+	statement.text.WriteString(fmt.Sprintf(`
 		SELECT id, type, payload
-		  FROM Messages
-		 WHERE type IN (`,
+		  FROM %s
+		 WHERE type IN (`, table),
 	)
 
 	for e, event := range op.Events {

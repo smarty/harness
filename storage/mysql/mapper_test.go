@@ -39,7 +39,7 @@ func (this *MapperFixture) Setup() {
 	_, err = handle.Exec(`TRUNCATE TABLE Snapshots;`)
 	this.So(err, should.BeNil)
 	this.stride = this.autoIncrementIncrement()
-	this.subject = NewMapper(handle, this.stride)
+	this.subject = NewMapper(handle, this.stride, "Snapshots", "Messages")
 }
 
 func (this *MapperFixture) autoIncrementIncrement() uint64 {

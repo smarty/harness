@@ -13,7 +13,6 @@ import (
 
 func (this *MapperFixture) saveSnapshot(watermark uint64, payload string) {
 	op := &storage.SaveSnapshot{
-		TableName:       "Snapshots",
 		Timestamp:       time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC),
 		HighWatermark:   watermark,
 		Payload:         []byte(payload),
@@ -24,7 +23,7 @@ func (this *MapperFixture) saveSnapshot(watermark uint64, payload string) {
 }
 
 func (this *MapperFixture) loadLatestSnapshot() *storage.LoadLatestSnapshot {
-	op := &storage.LoadLatestSnapshot{TableName: "Snapshots"}
+	op := &storage.LoadLatestSnapshot{}
 	this.So(this.subject.Exec(this.ctx, op), should.BeNil)
 	return op
 }
@@ -49,11 +48,13 @@ func (this *MapperFixture) TestLoadLatestSnapshotEmptyTableReportsNotFound() {
 }
 
 func (this *MapperFixture) TestSnapshotRejectsInvalidTableName() {
-	save := &storage.SaveSnapshot{TableName: "Snap; DROP", Timestamp: time.Now(), Payload: []byte(`{}`)}
-	this.So(this.subject.Exec(this.ctx, save), should.NOT.BeNil)
+	mapper := NewMapper(this.handle, this.stride, "Snap; DROP", "Messages")
 
-	load := &storage.LoadLatestSnapshot{TableName: "Snap; DROP"}
-	this.So(this.subject.Exec(this.ctx, load), should.NOT.BeNil)
+	save := &storage.SaveSnapshot{Timestamp: time.Now(), Payload: []byte(`{}`)}
+	this.So(mapper.Exec(this.ctx, save), should.NOT.BeNil)
+
+	load := &storage.LoadLatestSnapshot{}
+	this.So(mapper.Exec(this.ctx, load), should.NOT.BeNil)
 
 	// The rejected save must not have written a row.
 	clean := this.loadLatestSnapshot()

@@ -34,9 +34,9 @@ type LoadUndispatchedPage struct {
 	Messages  []*contracts.Message // populated by the handler
 }
 
-// SaveSnapshot persists one domain snapshot row into TableName.
+// SaveSnapshot persists one domain snapshot row. The target table is configured
+// on the mysql.Mapper (snapshotsTableName), not carried on the operation.
 type SaveSnapshot struct {
-	TableName       string
 	Timestamp       time.Time
 	HighWatermark   uint64
 	Payload         []byte
@@ -45,10 +45,10 @@ type SaveSnapshot struct {
 }
 
 type (
-	// LoadLatestSnapshot loads the most recent snapshot row from TableName.
+	// LoadLatestSnapshot loads the most recent snapshot row. The target table is
+	// configured on the mysql.Mapper (snapshotsTableName), not carried here.
 	LoadLatestSnapshot struct {
-		TableName string
-		Result    LoadedSnapshotResult // populated by the handler
+		Result LoadedSnapshotResult // populated by the handler
 	}
 	LoadedSnapshotResult struct {
 		Found           bool

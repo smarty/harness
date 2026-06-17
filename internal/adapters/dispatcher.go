@@ -1,8 +1,9 @@
 // Package adapters provides a reference implementation of the
-// handlers/harness Writer and Dispatcher interfaces, bound to the `Messages`
+// handlers/harness Writer and Dispatcher interfaces, shaped for the messages
 // MySQL table defined by doc/mysql/schema.sql in this module (columns
-// `id`, `dispatched`, `type`, `payload`). Callers running a different schema
-// should copy and adapt these types.
+// `id`, `dispatched`, `type`, `payload`). The table name itself is configured on
+// the mysql.Mapper (messagesTableName); these types build table-agnostic storage
+// operations. Callers running a different schema should copy and adapt these types.
 package adapters
 
 import (
