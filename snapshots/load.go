@@ -30,19 +30,24 @@ import (
 //     most likely via this Save, and/or
 //  3. Provide the applied domain to make business decisions, perhaps using
 //     the pipeline provided by github.com/smarty/harness/v2
-func Load(ctx context.Context, options ...loadOption) (LoadResult, error) {
+func Load[Snapshot any](ctx context.Context, options ...loadOption) (LoadResult[Snapshot], error) {
 	var config loadConfig
 	for _, option := range append(LoadOptions.defaults(), options...) {
 		option(&config)
 	}
-	return load(ctx, config)
+	return load[Snapshot](ctx, config)
 }
 
-type LoadResult struct {
-	LoadedSnapshot        any    // as initially loaded from storage
-	PreviousHighWatermark uint64 // of the LoadedSnapshot
-	NewHighWatermark      uint64 // high watermark of the Domain after replay; equals PreviousHighWatermark when no events were applied
-	EventsAppliedCount    uint64 // how many events were applied to the Domain
+type LoadResult[Snapshot any] struct {
+	Snapshot struct { // as loaded from storage
+		ID            uint64
+		Value         Snapshot
+		HighWatermark uint64
+	}
+	Domain struct { // after replay (if performed)
+		HighWatermark      uint64 // equals Snapshot.HighWatermark when no events were applied
+		EventsAppliedCount uint64 // how many events were applied to the Domain
+	}
 }
 
 const (
@@ -58,7 +63,6 @@ type loadConfig struct {
 		TypesByName map[string]reflect.Type
 		NamesByType map[reflect.Type]string
 	}
-	LoadedSnapshot any
 }
 
 type loadOption func(*loadConfig)
@@ -101,12 +105,6 @@ func (loading) RegisteredEvents(typesByName map[string]reflect.Type, namesByType
 	}
 }
 
-// LoadedSnapshot is how the caller provides a zero-value pointer to a snapshot,
-// which will be populated by Load.
-func (loading) LoadedSnapshot(pointer any) loadOption {
-	return func(config *loadConfig) { config.LoadedSnapshot = pointer }
-}
-
 func (loading) defaults(options ...loadOption) []loadOption {
 	var nop loadNop
 	return append([]loadOption{
@@ -115,7 +113,6 @@ func (loading) defaults(options ...loadOption) []loadOption {
 		LoadOptions.SnapshotID(Latest),
 		LoadOptions.Domain(nop),
 		LoadOptions.RegisteredEvents(nil, nil),
-		LoadOptions.LoadedSnapshot(new(struct{})), // a harmless pointer: callers normally supply a real target
 	}, options...)
 }
 
@@ -125,7 +122,7 @@ func (loadNop) Apply(any) {}
 
 func (loadNop) Exec(context.Context, any) error { return nil }
 
-func load(ctx context.Context, config loadConfig) (result LoadResult, err error) {
+func load[Snapshot any](ctx context.Context, config loadConfig) (result LoadResult[Snapshot], err error) {
 	// Load the projection:
 	var loadedSnapshotResult storage.LoadedSnapshotResult
 	if config.SnapshotID == Latest {
@@ -154,14 +151,16 @@ func load(ctx context.Context, config loadConfig) (result LoadResult, err error)
 			return result, fmt.Errorf("decompress snapshot: %w", err)
 		}
 	}
-	if err = json.Unmarshal(loadedSnapshotResult.Payload, config.LoadedSnapshot); err != nil {
+	var loadedSnapshot Snapshot
+	if err = json.Unmarshal(loadedSnapshotResult.Payload, &loadedSnapshot); err != nil {
 		return result, fmt.Errorf("unmarshal snapshot: %w", err)
 	}
 	config.Logger.Printf("[INFO] loaded snapshot at high watermark %d", loadedSnapshotResult.HighWatermark)
-	result.PreviousHighWatermark = loadedSnapshotResult.HighWatermark
-	result.NewHighWatermark = loadedSnapshotResult.HighWatermark // baseline; advances below only if events replay
-	result.LoadedSnapshot = config.LoadedSnapshot
-	config.Domain.Apply(reflect.ValueOf(result.LoadedSnapshot).Elem().Interface()) // de-reference the pointer so the domain will load, not save
+	result.Snapshot.ID = loadedSnapshotResult.SnapshotID
+	result.Snapshot.HighWatermark = loadedSnapshotResult.HighWatermark
+	result.Snapshot.Value = loadedSnapshot
+	result.Domain.HighWatermark = loadedSnapshotResult.HighWatermark // baseline; advances below only if events replay
+	config.Domain.Apply(loadedSnapshot)
 
 	if len(config.EventRegistry.NamesByType) == 0 {
 		return result, nil // no registry → caller doesn't want replay
@@ -195,12 +194,10 @@ func load(ctx context.Context, config loadConfig) (result LoadResult, err error)
 		if err := json.Unmarshal(event.Payload, pointer.Interface()); err != nil {
 			return result, fmt.Errorf("unmarshal event %q: %w", event.Type, err)
 		}
-		result.EventsAppliedCount++
+		result.Domain.EventsAppliedCount++
 		config.Domain.Apply(pointer.Elem().Interface())
 	}
-	if loadEvents.Result.NewHighWatermark > result.NewHighWatermark {
-		result.NewHighWatermark = loadEvents.Result.NewHighWatermark
-	}
+	result.Domain.HighWatermark = max(result.Domain.HighWatermark, loadEvents.Result.NewHighWatermark)
 
 	return result, nil
 }

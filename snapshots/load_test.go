@@ -121,27 +121,26 @@ func (this *LoadFixture) TestLatestPlainJSONLoadedAndAppliedToDomain() {
 		load := a.(*storage.LoadLatestSnapshot)
 		load.Result = storage.LoadedSnapshotResult{
 			Found:         true,
+			SnapshotID:    17,
 			HighWatermark: 42,
 			Payload:       marshalJSON(domainState{Name: "alpha", Count: 7}),
 		}
 		return nil
 	})
 	spy := &applicatorSpy{}
-	state := &domainState{}
 
-	result, err := Load(this.Context(),
+	result, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
-		LoadOptions.LoadedSnapshot(state),
 	)
 
 	this.So(err, should.BeNil)
-	this.So(result.PreviousHighWatermark, should.Equal, uint64(42))
-	this.So(result.NewHighWatermark, should.Equal, uint64(42)) // no replay: stays at the snapshot watermark, not zero
-	this.So(result.EventsAppliedCount, should.Equal, uint64(0))
-	this.So(result.LoadedSnapshot, should.Equal, state)
-	this.So(*state, should.Equal, domainState{Name: "alpha", Count: 7})
+	this.So(result.Snapshot.ID, should.Equal, uint64(17))
+	this.So(result.Snapshot.HighWatermark, should.Equal, uint64(42))
+	this.So(result.Domain.HighWatermark, should.Equal, uint64(42)) // no replay: stays at the snapshot watermark, not zero
+	this.So(result.Domain.EventsAppliedCount, should.Equal, uint64(0))
+	this.So(result.Snapshot.Value, should.Equal, domainState{Name: "alpha", Count: 7})
 	// The domain is applied the de-referenced value, not the pointer:
 	this.So(spy.applied, should.Equal, []any{domainState{Name: "alpha", Count: 7}})
 	this.So(this.logged, should.Equal, []string{"[INFO] loaded snapshot at high watermark 42"})
@@ -159,18 +158,16 @@ func (this *LoadFixture) TestLatestGzipPayloadDecompressed() {
 		return nil
 	})
 	spy := &applicatorSpy{}
-	state := &domainState{}
 
-	result, err := Load(this.Context(),
+	result, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
-		LoadOptions.LoadedSnapshot(state),
 	)
 
 	this.So(err, should.BeNil)
-	this.So(result.PreviousHighWatermark, should.Equal, uint64(99))
-	this.So(*state, should.Equal, domainState{Name: "beta", Count: 9})
+	this.So(result.Snapshot.HighWatermark, should.Equal, uint64(99))
+	this.So(result.Snapshot.Value, should.Equal, domainState{Name: "beta", Count: 9})
 }
 
 func (this *LoadFixture) TestCorruptGzipReturnsError() {
@@ -184,11 +181,10 @@ func (this *LoadFixture) TestCorruptGzipReturnsError() {
 	})
 	spy := &applicatorSpy{}
 
-	_, err := Load(this.Context(),
+	_, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
-		LoadOptions.LoadedSnapshot(&domainState{}),
 	)
 
 	this.So(err, should.NOT.BeNil)
@@ -205,11 +201,10 @@ func (this *LoadFixture) TestInvalidJSONReturnsError() {
 	})
 	spy := &applicatorSpy{}
 
-	_, err := Load(this.Context(),
+	_, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
-		LoadOptions.LoadedSnapshot(&domainState{}),
 	)
 
 	this.So(err, should.NOT.BeNil)
@@ -223,15 +218,14 @@ func (this *LoadFixture) TestSnapshotNotFoundReturnsMissingError() {
 	})
 	spy := &applicatorSpy{}
 
-	result, err := Load(this.Context(),
+	result, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
-		LoadOptions.LoadedSnapshot(&domainState{}),
 	)
 
 	this.So(err, should.WrapError, errMissingSnapshot)
-	this.So(result, should.Equal, LoadResult{})
+	this.So(result, should.Equal, LoadResult[domainState]{})
 	this.So(spy.applied, should.BeNil)
 }
 
@@ -240,11 +234,10 @@ func (this *LoadFixture) TestSnapshotStorageErrorPropagates() {
 	this.db.prepareExec(func(any) error { return boom })
 	spy := &applicatorSpy{}
 
-	_, err := Load(this.Context(),
+	_, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
-		LoadOptions.LoadedSnapshot(&domainState{}),
 	)
 
 	this.So(err, should.WrapError, boom)
@@ -256,12 +249,11 @@ func (this *LoadFixture) TestSpecificSnapshotStorageErrorPropagates() {
 	this.db.prepareExec(func(any) error { return boom })
 	spy := &applicatorSpy{}
 
-	_, err := Load(this.Context(),
+	_, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.SnapshotID(5),
 		LoadOptions.Domain(spy),
-		LoadOptions.LoadedSnapshot(&domainState{}),
 	)
 
 	this.So(err, should.WrapError, boom)
@@ -274,25 +266,25 @@ func (this *LoadFixture) TestSpecificSnapshotLoadedByID() {
 		this.So(load.ID, should.Equal, uint64(5))
 		load.Result = storage.LoadedSnapshotResult{
 			Found:         true,
+			SnapshotID:    5,
 			HighWatermark: 5,
 			Payload:       marshalJSON(domainState{Name: "specific", Count: 3}),
 		}
 		return nil
 	})
 	spy := &applicatorSpy{}
-	state := &domainState{}
 
-	result, err := Load(this.Context(),
+	result, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.SnapshotID(5),
 		LoadOptions.Domain(spy),
-		LoadOptions.LoadedSnapshot(state),
 	)
 
 	this.So(err, should.BeNil)
-	this.So(result.PreviousHighWatermark, should.Equal, uint64(5))
-	this.So(*state, should.Equal, domainState{Name: "specific", Count: 3})
+	this.So(result.Snapshot.ID, should.Equal, uint64(5))
+	this.So(result.Snapshot.HighWatermark, should.Equal, uint64(5))
+	this.So(result.Snapshot.Value, should.Equal, domainState{Name: "specific", Count: 3})
 }
 
 func (this *LoadFixture) TestEventsSinceWatermarkAppliedAfterSnapshot() {
@@ -316,20 +308,18 @@ func (this *LoadFixture) TestEventsSinceWatermarkAppliedAfterSnapshot() {
 		return nil
 	})
 	spy := &applicatorSpy{}
-	state := &domainState{}
 
-	result, err := Load(this.Context(),
+	result, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
-		LoadOptions.LoadedSnapshot(state),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
 	)
 
 	this.So(err, should.BeNil)
-	this.So(result.PreviousHighWatermark, should.Equal, uint64(3))
-	this.So(result.NewHighWatermark, should.Equal, uint64(7))
-	this.So(result.EventsAppliedCount, should.Equal, uint64(2))
+	this.So(result.Snapshot.HighWatermark, should.Equal, uint64(3))
+	this.So(result.Domain.HighWatermark, should.Equal, uint64(7))
+	this.So(result.Domain.EventsAppliedCount, should.Equal, uint64(2))
 	this.So(spy.applied, should.Equal, []any{
 		domainState{Name: "snap", Count: 1},
 		eventAlpha{Order: 11},
@@ -349,17 +339,16 @@ func (this *LoadFixture) TestNoRegistrySkipsEventQuery() {
 	spy := &applicatorSpy{}
 
 	// No RegisteredEvents provided → replay is not enabled.
-	result, err := Load(this.Context(),
+	result, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
-		LoadOptions.LoadedSnapshot(&domainState{}),
 	)
 
 	this.So(err, should.BeNil)
 	this.So(this.db.calls, should.Equal, 1) // the events query was skipped
-	this.So(result.EventsAppliedCount, should.Equal, uint64(0))
-	this.So(result.NewHighWatermark, should.Equal, uint64(4)) // no replay: equals the snapshot watermark
+	this.So(result.Domain.EventsAppliedCount, should.Equal, uint64(0))
+	this.So(result.Domain.HighWatermark, should.Equal, uint64(4)) // no replay: equals the snapshot watermark
 	this.So(spy.applied, should.Equal, []any{domainState{Name: "only-snapshot", Count: 0}})
 }
 
@@ -375,18 +364,17 @@ func (this *LoadFixture) TestRegistryButDomainAppliesNoEventsSkipsQuery() {
 	domain := &bareApplicator{}
 
 	// Registry provided, but the Domain declares no typed Apply<Foo> methods.
-	result, err := Load(this.Context(),
+	result, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(domain),
-		LoadOptions.LoadedSnapshot(&domainState{}),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
 	)
 
 	this.So(err, should.BeNil)
 	this.So(this.db.calls, should.Equal, 1) // the events query was skipped
-	this.So(result.EventsAppliedCount, should.Equal, uint64(0))
-	this.So(result.NewHighWatermark, should.Equal, uint64(4)) // no replay: equals the snapshot watermark
+	this.So(result.Domain.EventsAppliedCount, should.Equal, uint64(0))
+	this.So(result.Domain.HighWatermark, should.Equal, uint64(4)) // no replay: equals the snapshot watermark
 	this.So(domain.applied, should.Equal, []any{domainState{Name: "snapshot-only", Count: 0}})
 }
 
@@ -401,17 +389,16 @@ func (this *LoadFixture) TestDomainAppliesUnregisteredEventTypeReturnsError() {
 	domain := &gammaApplicator{}
 
 	// The Domain applies eventGamma, which is absent from the registry.
-	result, err := Load(this.Context(),
+	result, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(domain),
-		LoadOptions.LoadedSnapshot(&domainState{}),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
 	)
 
 	this.So(err, should.WrapError, errUnregisteredEventType)
 	this.So(this.db.calls, should.Equal, 1) // errored before querying storage
-	this.So(result.EventsAppliedCount, should.Equal, uint64(0))
+	this.So(result.Domain.EventsAppliedCount, should.Equal, uint64(0))
 	// The snapshot is applied before events are resolved:
 	this.So(domain.applied, should.Equal, []any{domainState{Name: "snap", Count: 1}})
 }
@@ -432,11 +419,10 @@ func (this *LoadFixture) TestUnsupportedEventTypeReturnsError() {
 	})
 	spy := &applicatorSpy{}
 
-	_, err := Load(this.Context(),
+	_, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
-		LoadOptions.LoadedSnapshot(&domainState{}),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
 	)
 
@@ -461,11 +447,10 @@ func (this *LoadFixture) TestCorruptEventPayloadReturnsError() {
 	})
 	spy := &applicatorSpy{}
 
-	_, err := Load(this.Context(),
+	_, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
-		LoadOptions.LoadedSnapshot(&domainState{}),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
 	)
 
@@ -484,11 +469,10 @@ func (this *LoadFixture) TestEventsStorageErrorPropagates() {
 	this.db.prepareExec(func(any) error { return boom })
 	spy := &applicatorSpy{}
 
-	_, err := Load(this.Context(),
+	_, err := Load[domainState](this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
-		LoadOptions.LoadedSnapshot(&domainState{}),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
 	)
 
