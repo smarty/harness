@@ -40,7 +40,7 @@ caller        domain          encode          Writer        ack caller    Dispat
 | entrypoint    | Accept callers; admit or shed; block until the work below it completes.              |
 | execution     | Coalesce batches into a unit of work; run registered domain `Execute*`/`Apply*`.     |
 | serialization | Encode each outbound event into its `Content` buffer.                                |
-| persistence   | Call `Writer.Write(...)`; retry forever with backoff until success or shutdown.      |
+| persistence   | Persist the unit via `Storage`; retry forever with backoff until success or shutdown.|
 | completion    | Fire each batch's `complete(true)` so blocked entrypoint callers return.             |
 | broadcast     | Call `Dispatcher.Dispatch(...)`; retry forever with backoff. Drains recovery first.  |
 | terminal      | Return pooled `*Message` / `unitOfWork` values to their `sync.Pool`s.                |
@@ -67,7 +67,7 @@ Things the library does **not** do:
 
 - It does not implement exactly-once delivery. Recovery republishes anything not yet marked dispatched.
 - It does not transport messages anywhere. You supply a `Dispatcher` (Kafka, RabbitMQ, NATS, HTTP, whatever).
-- It does not own the database. You supply a `Writer` and a `Recoverer`; the included `sqladapter` is a reference implementation against a specific MySQL schema.
+- It does not own the database. You hand it a storage implementation via `Options.Storage(...)`; the bundled `storage/mysql.Mapper` (targeting the schema in `doc/mysql/schema.sql`) is the supported one. The storage seam is module-private for now, so targeting a different store means forking that package.
 
 
 ## A minimal example
@@ -87,7 +87,7 @@ import (
     _ "github.com/go-sql-driver/mysql"
     harness "github.com/smarty/harness/v2"
     "github.com/smarty/harness/v2/contracts"
-    "github.com/smarty/harness/v2/sqladapter"
+    "github.com/smarty/harness/v2/storage/mysql"
 )
 
 // Domain message types.
@@ -126,15 +126,19 @@ func main() {
 
     db, _ := sql.Open("mysql", "user:pass@tcp(localhost:3306)/harness?parseTime=true")
 
+    // One mapper is the whole storage seam: the pipeline builds its persistence,
+    // dispatched-marking, and startup recovery on top of it. stride=1 matches a
+    // server with auto_increment_increment=1; the strings are the table names.
+    mapper := mysql.NewMapper(db, 1, "Snapshots", "Messages")
+
     pipeline, err := harness.New(ctx,
         harness.Options.DomainTypes(Handlers{}),
         harness.Options.MessageTypes(map[reflect.Type]string{
             reflect.TypeOf(SubscriptionRenewed{}): "subscription:renewed-v1",
         }),
         harness.Options.Serializer(JSONSerializer{}),
-        harness.Options.Writer(sqladapter.NewWriter(db, 1, func(context.Context, *sql.Tx, ...any) {})),
-        harness.Options.Recoverer(sqladapter.NewRecovery(db)),
-        harness.Options.Dispatcher(sqladapter.NewDispatcher(kafkaPublisher{}, db)),
+        harness.Options.Storage(mapper),
+        harness.Options.Dispatcher(kafkaPublisher{}), // your broker; the pipeline marks rows dispatched via Storage
     )
     if err != nil {
         panic(err)
@@ -181,9 +185,8 @@ Defaults are tuned so `harness.New(ctx)` produces a runnable (but inert) pipelin
 | `DomainTypes(...)`        | —       | Handlers whose `Execute<T>`/`Apply<T>` methods drive the pipeline.              |
 | `MessageTypes(...)`       | —       | `reflect.Type` → type-name map stamped into each persisted message.             |
 | `Serializer`              | no-op   | Encodes outbound event values into their `Content` buffer.                      |
-| `Writer`                  | no-op   | Persists serialized messages. Retried forever on error.                         |
-| `Dispatcher`              | no-op   | Publishes messages downstream. Retried forever on error.                        |
-| `Recoverer`               | no-op   | Pages the stored-but-undispatched backlog at startup.                           |
+| `Storage`                 | no-op   | Persists messages, marks them dispatched, and pages the recovery backlog.       |
+| `Dispatcher`              | no-op   | Publishes messages downstream (your broker). Retried forever on error.          |
 | `Monitor`                 | no-op   | Receives `monitoring.*` observations from every stage.                          |
 
 Invalid configuration (e.g. `BurstCapacity <= 0`, an interface-typed `Execute<T>`, a handler missing its generic `Execute`/`Apply`) is rejected by `New`, which returns a non-nil error wrapping `contracts.ErrInvalidConfiguration`. The returned `Pipeline` is the zero value in that case — don't run it.
@@ -220,11 +223,27 @@ Each value passed to `Options.DomainTypes(...)` must satisfy two parallel contra
 `New` rejects two foot-guns at startup: a typed `Execute<T>` without the generic interface (routes nothing), and a typed method routing an interface type (its `reflect.Type` key can never match a concrete runtime message). What it **cannot** catch: a generic-method switch missing a case its typed methods advertise. That message routes successfully, falls into no `case`, and silently vanishes. Keep the typed methods and the generic switch in lockstep — they are two halves of one contract.
 
 
-## The `sqladapter` package
+## The `storage/mysql` package
 
-The reference `Writer`, `Dispatcher`, and `Recovery` types target a specific MySQL schema:
+`storage/mysql.Mapper` is the bundled storage implementation. A single `Mapper` backs the whole module: `harness` builds its persistence, dispatched-marking, and startup recovery on top of it, and the `snapshots` package uses the same `Mapper` for snapshot load/save. Construct it with the `*sql.DB`, the auto-increment stride, and the two table names:
+
+```go
+mapper := mysql.NewMapper(db, 1, "Snapshots", "Messages")
+```
+
+It targets the schema in `doc/mysql/schema.sql`:
 
 ```sql
+CREATE TABLE Snapshots (
+  id               bigint unsigned NOT NULL AUTO_INCREMENT,
+  created          datetime(3)     NOT NULL,
+  high_watermark   bigint unsigned NOT NULL,
+  payload          longblob        NOT NULL,
+  content_type     varchar(127)    NOT NULL DEFAULT '',
+  content_encoding varchar(31)     NOT NULL DEFAULT '',
+  PRIMARY KEY (id)
+);
+
 CREATE TABLE Messages (
     id         bigint unsigned AUTO_INCREMENT NOT NULL,
     dispatched datetime(3)                        NULL,
@@ -235,13 +254,42 @@ CREATE TABLE Messages (
 CREATE UNIQUE INDEX ix_messages_dispatched ON Messages (dispatched, id);
 ```
 
-Each type is **single-goroutine** (reuses instance buffers across calls) and is intended to be driven only by the pipeline. Notable details:
+Unlike the per-role types it replaces, the `Mapper` is **safe for concurrent use** (it pools its statement buffers) — and it must be, since the pipeline drives it from three stages at once: persistence inserting, broadcast marking dispatched, and startup recovery paging the backlog. Notable behaviors:
 
-- `Writer.Write` issues one multi-row INSERT per batch and derives each message's `ID` from `LAST_INSERT_ID() + i*stride`. That derivation is safe only if no other writer issues "bulk inserts" against the same table concurrently, and `stride` matches the server's `auto_increment_increment`. The batch size is not capped, so callers must keep per-unit payloads within `max_allowed_packet`.
-- `Dispatcher.Dispatch` calls the inner publisher first, then marks the rows dispatched with `UPDATE Messages SET dispatched = NOW(3) WHERE dispatched IS NULL AND id IN (...)`. The `IS NULL` guard makes redelivery during recovery a no-op rather than a double-mark. Messages with `ID == 0` are rejected up front — they could never be marked and would republish on every restart.
-- `Recovery` is a keyset cursor: it snapshots `MIN(id)/MAX(id)` of undispatched rows on the first call and pages within that frozen window, advancing only after a clean page. Rows written by live traffic during the recovery window fall outside the snapshotted boundary and are handled by the live path.
+- **Insert.** One multi-row INSERT per batch; each message's `ID` is derived from `LAST_INSERT_ID() + i*stride`. That derivation is safe only if no other writer issues "bulk inserts" against the table concurrently and `stride` matches the server's `auto_increment_increment`. The batch is not size-capped, so keep per-unit payloads within `max_allowed_packet`.
+- **Mark dispatched.** `UPDATE Messages SET dispatched = NOW(3) WHERE dispatched IS NULL AND id IN (...)`. The `IS NULL` guard makes redelivery during recovery a no-op rather than a double-mark. Messages with `ID == 0` are rejected up front — they could never be marked and would republish on every restart.
+- **Recovery.** A keyset cursor: it snapshots `MIN(id)/MAX(id)` of undispatched rows on the first call and pages within that frozen window, advancing only after a clean page. Rows written by live traffic during the recovery window fall outside the snapshotted boundary and are handled by the live path.
+- **Table names** are validated against `^[A-Za-z0-9_]+$` (they can't be bound as `?` placeholders) and back-tick quoted before interpolation.
 
-If your schema differs, copy these files into your own package and adapt them — they exist primarily as a worked example of how to implement the contracts correctly.
+The storage seam is module-private, so `Mapper` is the supported implementation; targeting a different database currently means forking this package. A deprecated `mapper.WithLegacyWrite(...)` hook runs a transitional callback inside the same transaction as the message INSERT — retained only for migration and slated for removal.
+
+
+## Snapshots and replay (the `snapshots` package)
+
+For a domain that folds a long event stream into in-memory state, the `snapshots` package persists and rebuilds that state without replaying from the beginning of time. It uses the same `Storage` (the `Mapper`) as the pipeline.
+
+- `snapshots.Save(ctx, ...)` gzip-compresses a JSON snapshot and writes it, tagged with the high-watermark id of the last event it reflects.
+- `snapshots.Load(ctx, ...)` loads a snapshot (the latest, or a specific id via `SnapshotID`), applies it to your domain, and — only if you pass `RegisteredEvents(...)` — replays every event since that high watermark, in id order, by reflectively discovering the domain's `Apply<T>(T)` methods. It returns a `LoadResult` carrying the previous/new high watermarks and the count of events applied.
+
+```go
+domain := &AccountProjection{}   // applies the snapshot, then any newer events
+snapshot := &AccountSnapshot{}   // the DTO the stored JSON unmarshals into
+
+result, err := snapshots.Load(ctx,
+    snapshots.LoadOptions.Storage(mapper),
+    snapshots.LoadOptions.Domain(domain),
+    snapshots.LoadOptions.LoadedSnapshot(snapshot),
+    snapshots.LoadOptions.RegisteredEvents(typesByName, namesByType), // omit to stop at the snapshot
+)
+// ... later, after the domain has advanced ...
+err = snapshots.Save(ctx,
+    snapshots.SaveOptions.Storage(mapper),
+    snapshots.SaveOptions.HighWatermark(result.NewHighWatermark),
+    snapshots.SaveOptions.Snapshot(snapshot),
+)
+```
+
+`LoadResult.NewHighWatermark` is only populated when events were actually replayed (`EventsAppliedCount > 0`); when no replay happens it is zero. Guard your `Save` accordingly — persisting a snapshot at watermark zero would force a full replay on the next load.
 
 
 ## Building and testing
@@ -249,7 +297,7 @@ If your schema differs, copy these files into your own package and adapt them �
 ```
 make test          # go mod tidy, go fmt, then short tests with coverage and -race
 make build         # make test + go build ./...
-make test.db.local # docker compose up MySQL, run sqladapter integration tests, then down
+make test.db.local # docker compose up MySQL, run storage/mysql integration tests, then down
 ```
 
 CI (`.github/workflows/build.yml`) runs `make build` on every push.
@@ -257,7 +305,7 @@ CI (`.github/workflows/build.yml`) runs `make build` on every push.
 
 ## Module status
 
-This is the `v2` line of the module. The `legacyWrite` parameter on `sqladapter.NewWriter` is the only deprecated surface, retained for migration from older callers and slated for removal; new callers should pass a no-op.
+This is the `v2` line of the module. The `WithLegacyWrite(...)` hook on `storage/mysql.Mapper` is the only deprecated surface, retained for migration from older callers and slated for removal; new callers should omit it.
 
 
 ## SMARTY DISCLAIMER
