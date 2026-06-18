@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/contracts/monitoring"
@@ -15,12 +14,12 @@ type persistence struct {
 	monitor contracts.Monitor
 	input   chan *unitOfWork
 	output  chan *unitOfWork
-	writer  contracts.Writer
-	wait    func(context.Context, time.Duration) error
+	writer  writer
+	wait    waiter
 	buffer  []*contracts.Message
 }
 
-func newPersistence(ctx context.Context, monitor contracts.Monitor, input, output chan *unitOfWork, writer contracts.Writer, wait func(context.Context, time.Duration) error) *persistence {
+func newPersistence(ctx context.Context, monitor contracts.Monitor, input, output chan *unitOfWork, writer writer, wait waiter) *persistence {
 	return &persistence{
 		ctx:     ctx,
 		monitor: monitor,

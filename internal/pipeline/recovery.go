@@ -10,19 +10,19 @@ import (
 
 type recovery struct {
 	ctx       context.Context
-	recoverer contracts.Recoverer
+	recoverer recoverer
 	batchSize int
 	output    chan *unitOfWork
-	wait      contracts.Waiter
+	wait      waiter
 	monitor   contracts.Monitor
 }
 
 func newRecovery(
 	ctx context.Context,
-	recoverer contracts.Recoverer,
+	recoverer recoverer,
 	batchSize int,
 	output chan *unitOfWork,
-	wait contracts.Waiter,
+	wait waiter,
 	monitor contracts.Monitor,
 ) *recovery {
 	return &recovery{

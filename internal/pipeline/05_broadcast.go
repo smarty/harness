@@ -16,7 +16,7 @@ type broadcast struct {
 	output     chan *unitOfWork
 	buffer     []*contracts.Message
 	dispatcher contracts.Dispatcher
-	wait       contracts.Waiter
+	wait       waiter
 }
 
 func newBroadcast(
@@ -24,7 +24,7 @@ func newBroadcast(
 	monitor contracts.Monitor,
 	startup, input, output chan *unitOfWork,
 	dispatcher contracts.Dispatcher,
-	wait contracts.Waiter,
+	wait waiter,
 ) *broadcast {
 	return &broadcast{
 		ctx:        ctx,
