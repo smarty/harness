@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"reflect"
 	"regexp"
 	"slices"
 
@@ -324,14 +323,13 @@ func (this *Mapper) loadEventsSince(ctx context.Context, op *storage.LoadEventsS
 		 WHERE type IN (`, table),
 	)
 
-	for e, event := range op.Events {
-		name := op.TypeNames[reflect.TypeOf(event)]
+	for e, name := range op.Types {
 		if slices.Contains(statement.args, any(name)) {
 			continue
 		}
 		statement.args = append(statement.args, name)
 		statement.text.WriteString(`?`)
-		if e < len(op.Events)-1 {
+		if e < len(op.Types)-1 {
 			statement.text.WriteString(`,`)
 		}
 	}

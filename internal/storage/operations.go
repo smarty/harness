@@ -2,7 +2,6 @@ package storage
 
 import (
 	"errors"
-	"reflect"
 	"time"
 
 	"github.com/smarty/harness/v2/contracts"
@@ -67,11 +66,10 @@ type (
 
 type (
 	// LoadEventsSince loads serialized events newer than HighWatermark whose stored
-	// type matches one of Events, each resolved to its canonical name via TypeNames.
+	// type matches one of Types (canonical stored type names).
 	LoadEventsSince struct {
 		HighWatermark uint64
-		Events        []any                   // sample instances; key into TypeNames
-		TypeNames     map[reflect.Type]string // reflect.Type → canonical name
+		Types         []string // canonical stored type names to query for
 		Result        struct {
 			NewHighWatermark uint64
 			Events           []Event

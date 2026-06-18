@@ -4,12 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 
 	"github.com/smarty/harness/v2/contracts"
+	"github.com/smarty/harness/v2/internal/domainscan"
 )
-
-var broadcastFuncType = reflect.TypeOf(func(...any) {})
 
 func scan(types ...any) (executors map[reflect.Type][]executor, applicators map[reflect.Type][]applicator) {
 	executors = make(map[reflect.Type][]executor)
@@ -23,11 +21,11 @@ func scan(types ...any) (executors map[reflect.Type][]executor, applicators map[
 		t := reflect.TypeOf(v)
 		for x := range t.NumMethod() {
 			method := t.Method(x)
-			if isExecutor && isExecuteMethod(method) {
-				executors[handledType(method)] = append(executors[handledType(method)], e)
+			if isExecutor && domainscan.IsExecuteMethod(method) {
+				executors[domainscan.HandledType(method)] = append(executors[domainscan.HandledType(method)], e)
 			}
-			if isApplicator && isApplyMethod(method) {
-				applicators[handledType(method)] = append(applicators[handledType(method)], a)
+			if isApplicator && domainscan.IsApplyMethod(method) {
+				applicators[domainscan.HandledType(method)] = append(applicators[domainscan.HandledType(method)], a)
 			}
 		}
 	}
@@ -54,9 +52,9 @@ func validateDomainTypes(types ...any) (err error) {
 		for x := range t.NumMethod() {
 			method := t.Method(x)
 			switch {
-			case isExecuteMethod(method):
+			case domainscan.IsExecuteMethod(method):
 				err = errors.Join(err, validateHandler(t, method, isExecutor, "Execute(any, func(...any))"))
-			case isApplyMethod(method):
+			case domainscan.IsApplyMethod(method):
 				err = errors.Join(err, validateHandler(t, method, isApplicator, "Apply(any)"))
 			}
 		}
@@ -69,28 +67,10 @@ func validateHandler(t reflect.Type, method reflect.Method, implementsInterface 
 			"%w: %s has discoverable method %s but does not implement the generic %s interface, so it routes nothing",
 			contracts.ErrInvalidConfiguration, t, method.Name, generic)
 	}
-	if handledType(method).Kind() == reflect.Interface {
+	if domainscan.HandledType(method).Kind() == reflect.Interface {
 		return fmt.Errorf(
 			"%w: method %s.%s routes interface type %s, which can never match the concrete runtime type of a message",
-			contracts.ErrInvalidConfiguration, t, method.Name, handledType(method))
+			contracts.ErrInvalidConfiguration, t, method.Name, domainscan.HandledType(method))
 	}
 	return nil
-}
-func isExecuteMethod(method reflect.Method) bool {
-	if !strings.HasPrefix(method.Name, "Execute") || len(method.Name) == len("Execute") {
-		return false
-	}
-	if method.Type.NumIn() != 3 || method.Type.NumOut() > 0 {
-		return false
-	}
-	return method.Type.In(2) == broadcastFuncType
-}
-func isApplyMethod(method reflect.Method) bool {
-	if !strings.HasPrefix(method.Name, "Apply") || len(method.Name) == len("Apply") {
-		return false
-	}
-	return method.Type.NumIn() == 2 && method.Type.NumOut() == 0
-}
-func handledType(method reflect.Method) reflect.Type {
-	return method.Type.In(1)
 }

@@ -8,8 +8,8 @@ type logger interface {
 	Printf(format string, args ...any)
 }
 
-// applicator is the domain being rebuilt: InitializeDomain calls Apply once with
-// the decoded snapshot, then once per replayed event in ascending id order.
+// applicator is the domain being rebuilt: Load calls Apply once with the decoded
+// snapshot, then once per replayed event in ascending id order.
 type applicator interface {
 	Apply(message any)
 }
@@ -17,4 +17,5 @@ type applicator interface {
 var (
 	errMissingSnapshot        = errors.New("snapshots: no snapshot found")
 	errUnsupportedMessageType = errors.New("snapshots: unsupported message type")
+	errUnregisteredEventType  = errors.New("snapshots: domain applies an unregistered event type")
 )

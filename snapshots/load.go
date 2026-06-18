@@ -12,6 +12,7 @@ import (
 	"reflect"
 
 	"github.com/smarty/harness/v2/contracts"
+	"github.com/smarty/harness/v2/internal/domainscan"
 	"github.com/smarty/harness/v2/internal/storage"
 )
 
@@ -54,7 +55,6 @@ type loadConfig struct {
 	Storage       contracts.Storage
 	SnapshotID    uint64 // If equal to Latest, load the latest
 	Domain        applicator
-	DomainEvents  []any
 	EventRegistry struct {
 		TypesByName map[string]reflect.Type
 		NamesByType map[reflect.Type]string
@@ -84,21 +84,17 @@ func (loading) SnapshotID(snapshotID uint64) loadOption {
 	return func(config *loadConfig) { config.SnapshotID = snapshotID }
 }
 
-// Domain provides the object that will have the loaded snapshot applied
-// to it, as well as any DomainEvents (since the snapshot's high watermark)
-// that can be loaded.
+// Domain provides the object that will have the loaded snapshot applied to it,
+// as well as any events (since the snapshot's high watermark) that it can Apply.
 func (loading) Domain(domain applicator) loadOption {
 	return func(config *loadConfig) { config.Domain = domain }
 }
 
-// DomainEvents are instances of events that can be handled to the Apply method of object provided to Domain.
-// Passing no events signals that no reply should occur.
-// TODO: scan the domain type to discover which events it can Apply.
-func (loading) DomainEvents(events ...any) loadOption { // if none provided, that indicates the user doesn't want to replay events since the loaded snapshot's high watermark
-	return func(config *loadConfig) { config.DomainEvents = events }
-}
-
-// RegisteredEvents are indices of event types that will need to be instantiated (via reflection) and deserialized.
+// RegisteredEvents indexes the event types that can be (de)serialized. Providing
+// it ALSO opts Load into replaying events since the loaded snapshot's high
+// watermark: Load scans the Domain for Apply<Foo>(Foo) methods, resolves each to
+// its canonical name via namesByType, and loads those events. Omit it (the
+// default) to skip replay entirely and stop at the snapshot.
 func (loading) RegisteredEvents(typesByName map[string]reflect.Type, namesByType map[reflect.Type]string) loadOption {
 	return func(config *loadConfig) {
 		config.EventRegistry.TypesByName = typesByName
@@ -119,7 +115,6 @@ func (loading) defaults(options ...loadOption) []loadOption {
 		LoadOptions.Storage(nop),
 		LoadOptions.SnapshotID(Latest),
 		LoadOptions.Domain(nop),
-		LoadOptions.DomainEvents(),
 		LoadOptions.RegisteredEvents(nil, nil),
 		LoadOptions.LoadedSnapshot(struct{}{}),
 	}, options...)
@@ -168,14 +163,25 @@ func load(ctx context.Context, config loadConfig) (result LoadResult, err error)
 	result.LoadedSnapshot = config.LoadedSnapshot
 	config.Domain.Apply(reflect.ValueOf(result.LoadedSnapshot).Elem().Interface()) // de-reference the pointer so the domain will load, not save
 
-	if len(config.DomainEvents) == 0 {
-		return result, nil
+	if len(config.EventRegistry.NamesByType) == 0 {
+		return result, nil // no registry → caller doesn't want replay
 	}
-	// Load and apply events since high watermark if indicated
+	applied := domainscan.AppliedTypes(config.Domain)
+	if len(applied) == 0 {
+		return result, nil // registry provided, but the Domain applies no events
+	}
+	var typeNames []string
+	for _, eventType := range applied {
+		name, found := config.EventRegistry.NamesByType[eventType]
+		if !found {
+			return result, fmt.Errorf("%w: %s", errUnregisteredEventType, eventType)
+		}
+		typeNames = append(typeNames, name)
+	}
+	// Load and apply events since high watermark:
 	loadEvents := &storage.LoadEventsSince{
 		HighWatermark: loadedSnapshotResult.HighWatermark,
-		Events:        config.DomainEvents,
-		TypeNames:     config.EventRegistry.NamesByType,
+		Types:         typeNames,
 	}
 	if err = config.Storage.Exec(ctx, loadEvents); err != nil {
 		return result, err

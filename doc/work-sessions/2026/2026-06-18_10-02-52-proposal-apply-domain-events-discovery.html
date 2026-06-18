@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal — Discover replayable domain events by scanning the Domain</title>
+<style>
+  :root {
+    --ink: #1c2230; --muted: #5b6675; --line: #d9dee7; --bg: #f7f8fb;
+    --accent: #2f6f4f; --accent2: #b4541a; --warn: #8a6d1a; --code-bg: #1f2430;
+  }
+  * { box-sizing: border-box; }
+  body { font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--ink); background: var(--bg); margin: 0; padding: 0 0 6rem; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 0 1.5rem; }
+  header.page { background: linear-gradient(135deg, #20313f, #2f6f4f); color: #fff; padding: 2.4rem 0 2rem; margin-bottom: 2rem; }
+  header.page .wrap { padding-top: 0; }
+  header.page h1 { margin: 0 0 .4rem; font-size: 1.8rem; letter-spacing: -.01em; }
+  header.page .sub { opacity: .92; font-size: 1rem; }
+  header.page .meta { margin-top: 1rem; font-size: .82rem; opacity: .85; }
+  header.page code { background: rgba(255,255,255,.18); color:#fff; }
+  h2 { margin: 2.6rem 0 .8rem; font-size: 1.3rem; letter-spacing: -.01em; border-bottom: 2px solid var(--line); padding-bottom: .35rem; }
+  h3 { margin: 1.8rem 0 .5rem; font-size: 1.05rem; color: var(--accent); }
+  p { margin: .7rem 0; }
+  code { font: 13.5px/1.5 "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; background: #eceff4; padding: .1em .35em; border-radius: 4px; }
+  pre { background: var(--code-bg); color: #e6e9ef; padding: 1rem 1.2rem; border-radius: 8px; overflow-x: auto;
+    font: 13px/1.55 "SF Mono","JetBrains Mono",Menlo,Consolas,monospace; margin: .9rem 0; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .tok-key { color: #c792ea; } .tok-str { color: #c3e88d; } .tok-com { color: #7f8a9c; font-style: italic; }
+  .tok-typ { color: #82aaff; } .tok-fn { color: #ffcb6b; }
+  .callout { border-left: 4px solid var(--accent); background: #eef5f0; padding: .9rem 1.1rem; border-radius: 0 8px 8px 0; margin: 1.2rem 0; }
+  .callout.warn { border-color: var(--warn); background: #faf5e6; }
+  .callout .lbl { font-weight: 700; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; display: block; margin-bottom: .3rem; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .9rem; }
+  th, td { border: 1px solid var(--line); padding: .5rem .65rem; text-align: left; vertical-align: top; }
+  th { background: #edf1f7; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .diagram { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 1.2rem; margin: 1rem 0; text-align: center; }
+  .diagram svg { max-width: 100%; height: auto; }
+  ul.check { list-style: none; padding-left: 0; }
+  ul.check li { position: relative; padding-left: 1.7rem; margin: .35rem 0; }
+  ul.check li::before { content: "☐"; position: absolute; left: 0; color: var(--accent); font-size: 1.05rem; }
+  ul.check li.done::before { content: "☑"; }
+  ul.check li.done { color: var(--muted); }
+  .phase { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.3rem; margin: 1rem 0; }
+  .phase h3 { margin-top: .2rem; }
+  .pill { display:inline-block; font-size:.68rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; padding:.12em .5em; border-radius:99px; vertical-align:middle; margin-left:.4rem; }
+  .pill.red { background:#fde3e0; color:#a23a28; } .pill.green { background:#e1f0e6; color:#2f6f4f; }
+  .legend { font-size: .8rem; color: var(--muted); }
+  del { color: var(--accent2); text-decoration: line-through; }
+  ins { color: var(--accent); text-decoration: none; font-weight: 600; }
+</style>
+</head>
+<body>
+<header class="page">
+  <div class="wrap">
+    <h1>Discover replayable domain events by scanning the <code>Domain</code></h1>
+    <div class="sub">Delete <code>snapshots.LoadOptions.DomainEvents(events ...any)</code> with no replacement option: the
+      already-required <code>RegisteredEvents</code> registry doubles as the replay opt-in. When it is provided,
+      <code>Load</code> reflectively discovers which event types the <code>Domain</code> can <code>Apply</code> — reusing the
+      method-shape machinery currently buried in <code>internal/pipeline/scanner.go</code> — resolves them to canonical
+      names, and hands storage a plain <code>[]string</code> (no type registry crosses the storage boundary).</div>
+    <div class="meta">
+      Proposal · 2026-06-18 10:02:52 · branch <code>master</code> · author Michael Whatcott<br>
+      Status: <strong>DRAFT — revised per review (rev 4). No code to be written until approved.</strong>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<h2>Background</h2>
+<p>
+The new <code>snapshots</code> package (<code>load.go</code>, <code>save.go</code>, <code>contracts.go</code>) replaces the
+older <code>snapshots.go</code>. Its <code>Load</code> entry point loads a snapshot, applies it to a caller-supplied
+<code>Domain</code>, then — optionally — replays every event newer than the snapshot's high watermark through the same
+<code>Domain.Apply</code> method.
+</p>
+<p>
+Today the caller signals <em>which</em> events to replay by handing <code>Load</code> a slice of sample instances:
+</p>
+<pre><code><span class="tok-com">// current: load.go</span>
+<span class="tok-com">// TODO: scan the domain type to discover which events it can Apply.</span>
+<span class="tok-key">func</span> (loading) <span class="tok-fn">DomainEvents</span>(events ...<span class="tok-key">any</span>) loadOption {
+    <span class="tok-key">return func</span>(config *loadConfig) { config.DomainEvents = events }
+}</code></pre>
+<p>
+This is redundant and error-prone. The <code>Domain</code> already <em>declares</em> exactly which events it understands —
+it has one <code>Apply&lt;Foo&gt;(Foo)</code> method per event type. Forcing the caller to <em>also</em> pass a parallel list
+of sample instances invites three failure modes:
+</p>
+<ul>
+  <li><strong>Drift</strong> — the caller adds an <code>ApplyOrderShipped</code> method but forgets to add <code>orderShipped{}</code>
+      to the <code>DomainEvents(...)</code> list, so that event silently never replays.</li>
+  <li><strong>Over-listing</strong> — the caller passes an event the <code>Domain</code> has no handler for; it loads from
+      storage and is applied to a no-op, wasting a query and muddying intent.</li>
+  <li><strong>Ceremony</strong> — every call site repeats a list the type system could derive.</li>
+</ul>
+<p>
+The harness already solved this exact problem for the pipeline. <code>internal/pipeline/scanner.go</code> reflectively
+discovers <code>Execute&lt;Foo&gt;</code> / <code>Apply&lt;Foo&gt;</code> methods and routes by the parameter's
+<code>reflect.Type</code>. We should lift that method-shape detection into a shared spot and reuse it here.
+</p>
+
+<h2>Goal</h2>
+<p>
+Remove <code>DomainEvents</code> outright and add <strong>no new option in its place</strong>. The
+<code>RegisteredEvents</code> option is already <em>required</em> whenever events are replayed — it carries the type↔name
+maps needed to query for and deserialize them. So its mere presence is the signal: <strong>provide
+<code>RegisteredEvents</code> and <code>Load</code> discovers + replays; omit it and <code>Load</code> stops at the
+snapshot.</strong> The event set itself is derived from the <code>Domain</code> by reflection, never hand-listed.
+</p>
+<pre><code><span class="tok-com">// RegisteredEvents indexes the event types that can be (de)serialized.</span>
+<span class="tok-com">// Providing it ALSO opts Load into replaying events since the loaded</span>
+<span class="tok-com">// snapshot's high watermark: Load scans the Domain for Apply&lt;Foo&gt;(Foo)</span>
+<span class="tok-com">// methods, resolves each to its canonical name via namesByType, and</span>
+<span class="tok-com">// loads those events. Omit it (the default) to skip replay entirely.</span>
+<span class="tok-key">func</span> (loading) <span class="tok-fn">RegisteredEvents</span>(typesByName map[<span class="tok-typ">string</span>]reflect.Type, namesByType map[reflect.Type]<span class="tok-typ">string</span>) loadOption {
+    <span class="tok-key">return func</span>(config *loadConfig) {
+        config.EventRegistry.TypesByName = typesByName
+        config.EventRegistry.NamesByType = namesByType
+    }
+}</code></pre>
+<p>
+Net effect on the option surface: <code>DomainEvents</code> is <strong>deleted</strong>, no
+<code>ApplyDomainEventsSinceHighWatermark</code> is introduced, and <code>RegisteredEvents</code> gains a second, documented
+responsibility. <code>Load</code>'s options shrink to <code>Logger</code>, <code>Storage</code>, <code>SnapshotID</code>,
+<code>Domain</code>, <code>RegisteredEvents</code>, <code>LoadedSnapshot</code>.
+</p>
+
+<div class="callout">
+  <span class="lbl">Resolved decisions (from review)</span>
+  <strong>D0.</strong> No boolean opt-in option. The presence of <code>RegisteredEvents</code> (a non-empty
+  <code>NamesByType</code>) is what enables event replay; <code>DomainEvents</code> is removed.<br>
+  <strong>D1.</strong> A type the <code>Domain</code> can <code>Apply</code> but that is <em>absent</em> from
+  <code>RegisteredEvents</code> is a configuration error — <code>Load</code> <strong>returns an error</strong> (never silently
+  skips).<br>
+  <strong>D2.</strong> <code>domainscan.AppliedTypes</code> <strong>de-duplicates</strong> its result.<br>
+  <strong>D3.</strong> The shared package is named <code>internal/domainscan</code>.<br>
+  <strong>D4.</strong> <code>Load</code> resolves the discovered types to their canonical <em>string</em> names and passes a
+  <code>[]string</code> directly on the storage operation. <code>storage.LoadEventsSince</code> drops its
+  <code>TypeNames</code> map entirely and replaces <code>Events []any</code> with <code>Types []string</code> — so storage
+  no longer consults any type registry. This requires changes to the storage operation and the MySQL mapper.
+</div>
+
+<h2>Approach</h2>
+
+<h3>1 · Extract the method-shape machinery into <code>internal/domainscan</code></h3>
+<p>
+<code>internal/pipeline/scanner.go</code> owns three reflective primitives that are not pipeline-specific:
+<code>isApplyMethod</code>, <code>isExecuteMethod</code>, and <code>handledType</code> (plus the
+<code>broadcastFuncType</code> sentinel). They encode the single source of truth for "<em>what does a discoverable handler
+method look like?</em>"
+</p>
+<p>
+We lift these into a new leaf package, <code>internal/domainscan</code>, as exported helpers, and add one new convenience for
+the snapshots use case:
+</p>
+<pre><code><span class="tok-com">// internal/domainscan/scan.go</span>
+<span class="tok-key">package</span> domainscan
+
+<span class="tok-key">func</span> <span class="tok-fn">IsApplyMethod</span>(method reflect.Method) <span class="tok-typ">bool</span>     { <span class="tok-com">/* moved verbatim */</span> }
+<span class="tok-key">func</span> <span class="tok-fn">IsExecuteMethod</span>(method reflect.Method) <span class="tok-typ">bool</span>   { <span class="tok-com">/* moved verbatim */</span> }
+<span class="tok-key">func</span> <span class="tok-fn">HandledType</span>(method reflect.Method) reflect.Type { <span class="tok-com">/* moved verbatim */</span> }
+
+<span class="tok-com">// AppliedTypes returns the de-duplicated message types discoverable on v</span>
+<span class="tok-com">// via methods shaped like Apply&lt;Foo&gt;(Foo). Returns nil for a nil value</span>
+<span class="tok-com">// or one with no such methods.</span>
+<span class="tok-key">func</span> <span class="tok-fn">AppliedTypes</span>(v <span class="tok-key">any</span>) (results []reflect.Type) {
+    <span class="tok-key">if</span> v == <span class="tok-key">nil</span> {
+        <span class="tok-key">return nil</span>
+    }
+    seen := make(map[reflect.Type]<span class="tok-typ">bool</span>)
+    t := reflect.<span class="tok-fn">TypeOf</span>(v)
+    <span class="tok-key">for</span> x := <span class="tok-key">range</span> t.<span class="tok-fn">NumMethod</span>() {
+        method := t.<span class="tok-fn">Method</span>(x)
+        <span class="tok-key">if</span> !<span class="tok-fn">IsApplyMethod</span>(method) {
+            <span class="tok-key">continue</span>
+        }
+        <span class="tok-key">if</span> handled := <span class="tok-fn">HandledType</span>(method); !seen[handled] {
+            seen[handled] = <span class="tok-key">true</span>
+            results = append(results, handled)
+        }
+    }
+    <span class="tok-key">return</span> results
+}</code></pre>
+<p>
+The naming matters: <code>internal/pipeline/scanner.go</code> already defines a function literally named <code>scan</code>, so the
+package <strong>cannot</strong> be called <code>scan</code> (the import name would collide with the function). <code>domainscan</code>
+avoids the collision and reads well at both call sites: <code>domainscan.IsApplyMethod(...)</code>, <code>domainscan.AppliedTypes(...)</code>.
+</p>
+
+<h3>2 · Refactor <code>pipeline/scanner.go</code> to consume the shared helpers</h3>
+<p>
+The pipeline keeps its own <code>scan(types...)</code> (it maps to pipeline's <code>executor</code>/<code>applicator</code>
+<em>instances</em>, which is pipeline-specific) and <code>validateDomainTypes</code>, but they now delegate the method-shape
+checks to <code>domainscan</code>. This is a pure refactor — no behavior change — guarded by the existing pipeline tests
+(routing, config validation), which stay green.
+</p>
+<pre><code><span class="tok-com">// after: internal/pipeline/scanner.go (excerpt)</span>
+<span class="tok-key">for</span> x := <span class="tok-key">range</span> t.NumMethod() {
+    method := t.Method(x)
+    <span class="tok-key">if</span> isExecutor &amp;&amp; domainscan.<span class="tok-fn">IsExecuteMethod</span>(method) {
+        executors[domainscan.<span class="tok-fn">HandledType</span>(method)] = append(...)
+    }
+    <span class="tok-key">if</span> isApplicator &amp;&amp; domainscan.<span class="tok-fn">IsApplyMethod</span>(method) {
+        applicators[domainscan.<span class="tok-fn">HandledType</span>(method)] = append(...)
+    }
+}</code></pre>
+
+<h3>3 · Make the storage operation registry-free — it takes <code>[]string</code></h3>
+<p>
+The mapper's only use of <code>Events</code> + <code>TypeNames</code> today is to turn each sample instance into a canonical
+<em>name</em> for the <code>WHERE type IN (...)</code> clause. If <code>Load</code> resolves those names itself (it owns the
+registry anyway), the storage operation reduces to "<em>here are the type names to query for</em>" — no reflection, no
+registry, nothing for storage to look up:
+</p>
+<pre><code><span class="tok-com">// internal/storage/operations.go</span>
+LoadEventsSince <span class="tok-key">struct</span> {
+    HighWatermark <span class="tok-typ">uint64</span>
+    <del>Events        []any</del>
+    <del>TypeNames     map[reflect.Type]string</del>
+    <ins>Types         []string</ins>  <span class="tok-com">// canonical stored type names to query for</span>
+    Result        <span class="tok-key">struct</span> { ... }
+}</code></pre>
+<pre><code><span class="tok-com">// storage/mysql/mapper.go — loadEventsSince (excerpt)</span>
+<del>for e, event := range op.Events {
+    name := op.TypeNames[reflect.TypeOf(event)]</del>
+<ins>for e, name := range op.Types {</ins>
+    <span class="tok-key">if</span> slices.<span class="tok-fn">Contains</span>(statement.args, any(name)) {
+        <span class="tok-key">continue</span>
+    }
+    statement.args = append(statement.args, name)
+    ...
+}</code></pre>
+<p>
+With <code>TypeNames</code> gone, <code>internal/storage/operations.go</code> no longer imports <code>reflect</code> for this
+operation. Resolution moves up into <code>Load</code> (section 5), which is the only place that holds the registry.
+</p>
+
+<h3>4 · Remove the <code>DomainEvents</code> option; gate on <code>RegisteredEvents</code></h3>
+<table>
+  <tr><th>Concern</th><th>Before</th><th>After</th></tr>
+  <tr>
+    <td>Option</td>
+    <td><code>DomainEvents(events ...any)</code></td>
+    <td><em>removed</em> — no replacement option</td>
+  </tr>
+  <tr>
+    <td><code>loadConfig</code> field</td>
+    <td><code>DomainEvents []any</code></td>
+    <td><em>removed</em> (the existing <code>EventRegistry</code> field is the gate)</td>
+  </tr>
+  <tr>
+    <td>Replay enabled when…</td>
+    <td><code>len(DomainEvents) &gt; 0</code></td>
+    <td><code>RegisteredEvents</code> provided (non-empty <code>NamesByType</code>)</td>
+  </tr>
+  <tr>
+    <td>Default</td>
+    <td><code>DomainEvents()</code> → empty slice (no replay)</td>
+    <td><code>RegisteredEvents(nil, nil)</code> → empty registry (no replay)</td>
+  </tr>
+  <tr>
+    <td>Event set</td>
+    <td>Caller-supplied sample instances</td>
+    <td>Discovered from <code>Domain</code> via <code>domainscan.AppliedTypes</code></td>
+  </tr>
+</table>
+
+<h3>5 · Derive &amp; validate the event set inside <code>load()</code></h3>
+<p>
+The replay branch changes from "<em>did the caller pass events?</em>" to "<em>did the caller supply a registry, and does the
+Domain declare any applicable types?</em>" Per <strong>D1</strong>, every discovered type <strong>must</strong> be present in
+the <code>RegisteredEvents</code> registry; an applicable-but-unregistered type is a configuration error, not a skip:
+</p>
+<pre><code><span class="tok-key">if</span> len(config.EventRegistry.NamesByType) == <span class="tok-str">0</span> {
+    <span class="tok-key">return</span> result, <span class="tok-key">nil</span> <span class="tok-com">// no registry → caller doesn't want replay</span>
+}
+applied := domainscan.<span class="tok-fn">AppliedTypes</span>(config.Domain) <span class="tok-com">// de-duplicated</span>
+<span class="tok-key">if</span> len(applied) == <span class="tok-str">0</span> {
+    <span class="tok-key">return</span> result, <span class="tok-key">nil</span> <span class="tok-com">// registry provided, but the Domain applies no events — nothing to replay</span>
+}
+<span class="tok-key">var</span> typeNames []<span class="tok-typ">string</span>
+<span class="tok-key">for</span> _, t := <span class="tok-key">range</span> applied {
+    name, ok := config.EventRegistry.NamesByType[t]
+    <span class="tok-key">if</span> !ok {
+        <span class="tok-key">return</span> result, fmt.<span class="tok-fn">Errorf</span>(<span class="tok-str">"%w: %s"</span>, errUnregisteredEventType, t) <span class="tok-com">// D1: fail loud</span>
+    }
+    typeNames = append(typeNames, name)
+}
+loadEvents := &amp;storage.LoadEventsSince{
+    HighWatermark: loadedSnapshotResult.HighWatermark,
+    Types:         typeNames, <span class="tok-com">// []string — storage needs no registry</span>
+}
+<span class="tok-com">// ... unmarshal each loaded row via TypesByName, then Domain.Apply — unchanged</span></code></pre>
+<p>
+A new sentinel joins <code>contracts.go</code>:
+<code>errUnregisteredEventType = errors.New("snapshots: domain applies an unregistered event type")</code>.
+</p>
+
+<div class="callout">
+  <span class="lbl">Why <code>RegisteredEvents</code> stays — and now lives entirely in <code>snapshots</code></span>
+  Both registry maps are still needed, but now they are consumed <em>only</em> inside the <code>snapshots</code> package:
+  <code>NamesByType</code> turns each discovered <code>reflect.Type</code> into the canonical name composed into the
+  <code>[]string</code> query, and <code>TypesByName</code> turns each loaded row's stored name back into a concrete type to
+  unmarshal and <code>Apply</code>. The <code>Domain</code> knows the <em>types</em>; the caller knows the <em>stored
+  names</em>; storage now knows neither. So <code>RegisteredEvents(typesByName, namesByType)</code> is unchanged, but the
+  registry no longer crosses the storage boundary.
+</div>
+
+<h3>Data flow</h3>
+<div class="diagram">
+<svg viewBox="0 0 720 690" width="720" role="img" aria-label="Event discovery data flow">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#5b6675"/>
+    </marker>
+    <style>
+      .box   { fill:#ffffff; stroke:#2f6f4f; stroke-width:1.5; }
+      .box2  { fill:#eef5f0; stroke:#2f6f4f; stroke-width:1.5; }
+      .err   { fill:#faf5e6; stroke:#8a6d1a; stroke-width:1.5; }
+      .title { font:600 14px -apple-system,"Segoe UI",sans-serif; fill:#1c2230; }
+      .sub   { font:12px "SF Mono",Menlo,monospace; fill:#5b6675; }
+      .edge  { stroke:#5b6675; stroke-width:1.6; fill:none; marker-end:url(#arrow); }
+      .mask  { fill:#ffffff; stroke:#d9dee7; stroke-width:1; }
+      .flow  { font:11.5px "SF Mono",Menlo,monospace; fill:#2f6f4f; }
+      .side  { font:11px "SF Mono",Menlo,monospace; fill:#5b6675; }
+      .errtxt{ font:11px "SF Mono",Menlo,monospace; fill:#8a6d1a; }
+    </style>
+  </defs>
+
+  <!-- B1 -->
+  <rect class="box2" x="180" y="24" width="360" height="54" rx="9"/>
+  <text class="title" x="360" y="48" text-anchor="middle">RegisteredEvents(...) provided</text>
+  <text class="sub"   x="360" y="66" text-anchor="middle">non-empty registry → replay enabled</text>
+
+  <line class="edge" x1="360" y1="78" x2="360" y2="130"/>
+
+  <!-- B2 -->
+  <rect class="box" x="180" y="132" width="360" height="58" rx="9"/>
+  <text class="title" x="360" y="158" text-anchor="middle">domainscan.AppliedTypes(config.Domain)</text>
+  <text class="sub"   x="360" y="178" text-anchor="middle">reflect over Apply&lt;Foo&gt;(Foo) methods</text>
+
+  <line class="edge" x1="360" y1="190" x2="360" y2="248"/>
+  <rect class="mask" x="266" y="209" width="188" height="22" rx="5"/>
+  <text class="flow" x="360" y="224" text-anchor="middle">[]reflect.Type · de-duped</text>
+
+  <!-- B3 -->
+  <rect class="box" x="180" y="250" width="360" height="60" rx="9"/>
+  <text class="title" x="360" y="276" text-anchor="middle">resolve &amp; validate names</text>
+  <text class="sub"   x="360" y="296" text-anchor="middle">name := NamesByType[type]</text>
+
+  <!-- error branch -->
+  <line class="edge" x1="540" y1="280" x2="558" y2="280"/>
+  <rect class="err" x="560" y="256" width="150" height="48" rx="9"/>
+  <text class="errtxt" x="635" y="276" text-anchor="middle">unregistered type</text>
+  <text class="errtxt" x="635" y="292" text-anchor="middle">→ return error (D1)</text>
+
+  <line class="edge" x1="360" y1="310" x2="360" y2="368"/>
+  <rect class="mask" x="258" y="329" width="204" height="22" rx="5"/>
+  <text class="flow" x="360" y="344" text-anchor="middle">[]string (canonical names)</text>
+
+  <!-- B4 -->
+  <rect class="box" x="180" y="370" width="360" height="58" rx="9"/>
+  <text class="title" x="360" y="396" text-anchor="middle">storage.LoadEventsSince</text>
+  <text class="sub"   x="360" y="416" text-anchor="middle">{ Types []string, HighWatermark }</text>
+
+  <line class="edge" x1="360" y1="428" x2="360" y2="480"/>
+
+  <!-- B5 -->
+  <rect class="box" x="180" y="482" width="360" height="62" rx="9"/>
+  <text class="title" x="360" y="508" text-anchor="middle">Mapper.loadEventsSince</text>
+  <text class="sub"   x="360" y="528" text-anchor="middle">SELECT … WHERE type IN (?,?) AND id &gt; ?</text>
+
+  <line class="edge" x1="360" y1="544" x2="360" y2="602"/>
+  <rect class="mask" x="278" y="563" width="164" height="22" rx="5"/>
+  <text class="flow" x="360" y="578" text-anchor="middle">rows: { type, payload }</text>
+
+  <!-- B6 -->
+  <rect class="box2" x="180" y="604" width="360" height="60" rx="9"/>
+  <text class="title" x="360" y="630" text-anchor="middle">load(): decode via TypesByName</text>
+  <text class="sub"   x="360" y="650" text-anchor="middle">Domain.Apply(event) — id ascending</text>
+
+  <!-- side inputs (from the left) -->
+  <text class="side" x="170" y="156" text-anchor="end">config.Domain</text>
+  <line class="edge" x1="96" y1="167" x2="178" y2="167"/>
+
+  <text class="side" x="170" y="266" text-anchor="end">RegisteredEvents</text>
+  <text class="side" x="170" y="280" text-anchor="end">.NamesByType</text>
+  <line class="edge" x1="96" y1="291" x2="178" y2="291"/>
+
+  <text class="side" x="170" y="620" text-anchor="end">RegisteredEvents</text>
+  <text class="side" x="170" y="634" text-anchor="end">.TypesByName</text>
+  <line class="edge" x1="96" y1="645" x2="178" y2="645"/>
+</svg>
+</div>
+
+<h2>Trade-offs &amp; remaining notes</h2>
+<table>
+  <tr><th>Topic</th><th>Assessment</th></tr>
+  <tr>
+    <td>Touching covered pipeline code</td>
+    <td><code>scanner.go</code> is centrally important and at 100% coverage. The refactor is mechanical and behavior-preserving;
+        existing routing/config tests are the safety net. Net win: one definition of "handler method shape" instead of two.</td>
+  </tr>
+  <tr>
+    <td>Registry-free storage operation (<strong>D4</strong>)</td>
+    <td><code>LoadEventsSince</code> drops <code>TypeNames map[reflect.Type]string</code> and replaces
+        <code>Events []any</code> with <code>Types []string</code>. Blast radius:
+        <code>internal/storage/operations.go</code> (also drops its now-unused <code>reflect</code> import),
+        <code>storage/mysql/mapper.go</code>, and the live-DB test <code>mapper_snapshots_test.go</code> (which currently
+        seeds both <code>Events</code> and <code>TypeNames</code>). The operation is internal/unreleased, so this is a free,
+        clarifying change: the storage layer stops carrying a reflection registry it never owned, and name resolution lands in
+        the one component that holds the registry — <code>snapshots.Load</code>.</td>
+  </tr>
+  <tr>
+    <td>Registry provided but Domain applies nothing</td>
+    <td>Returns cleanly with no replay (no events to load is legitimate — e.g. a snapshot-only domain). This is distinct from
+        D1's error case, which is about an applicable type missing from the registry.</td>
+  </tr>
+  <tr>
+    <td>Overloading <code>RegisteredEvents</code>' meaning</td>
+    <td>The option now does double duty: registry <em>and</em> replay opt-in. Mitigated by the doc comment (shown in Goal) and
+        by the fact that there is no sensible reason to register events except to replay them — the two intents always coincide.
+        The alternative (a separate boolean) is exactly the redundant ceremony this revision removes.</td>
+  </tr>
+  <tr>
+    <td>Breaking change</td>
+    <td><code>DomainEvents</code> is brand-new and unreleased (replacing <code>snapshots.go</code>), so removing it outright is
+        fine — no deprecation shim needed.</td>
+  </tr>
+  <tr>
+    <td><code>Domain</code> default is <code>loadNop</code></td>
+    <td><code>loadNop</code> has only a generic <code>Apply(any)</code> (excluded by the method-shape check), so
+        <code>AppliedTypes</code> returns nil and replay is skipped even if the flag is set without a real domain. Safe.</td>
+  </tr>
+</table>
+
+<h2>Implementation checklist</h2>
+
+<div class="phase">
+  <h3>Phase 1 — Extract <code>internal/domainscan</code></h3>
+  <ul class="check">
+    <li class="done"><span class="pill red">red</span> Write <code>internal/domainscan/scan_test.go</code> (<code>gunit</code> fixture) covering
+        the predicates and <code>AppliedTypes</code>: two typed <code>Apply</code> methods → <code>{Foo, Bar}</code>; generic
+        <code>Apply(any)</code> only → <code>nil</code>; typed <code>Apply</code> alongside <code>Execute</code> → Execute
+        ignored; duplicate <code>Apply</code> of same type → de-duplicated; <code>nil</code> → <code>nil</code> (no panic);
+        no methods → <code>nil</code>. Run — fails to compile (package absent).</li>
+    <li class="done">Create <code>internal/domainscan/scan.go</code>: move <code>broadcastFuncType</code>, and move + export
+        <code>IsApplyMethod</code>, <code>IsExecuteMethod</code>, <code>HandledType</code> from
+        <code>internal/pipeline/scanner.go</code> (verbatim logic); add <code>AppliedTypes</code>.</li>
+    <li class="done"><span class="pill green">green</span> <code>go test ./internal/domainscan/...</code> — all cases pass.</li>
+    <li class="done">Edit <code>internal/pipeline/scanner.go</code> + <code>validateDomainTypes</code> to call
+        <code>domainscan.IsApplyMethod</code> / <code>IsExecuteMethod</code> / <code>HandledType</code>; delete the local copies.</li>
+    <li class="done"><span class="pill green">green</span> <code>go test ./internal/pipeline/...</code> — existing routing &amp;
+        config-validation tests pass unchanged (proves the refactor is behavior-preserving).</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h3>Phase 2 — Make <code>LoadEventsSince</code> registry-free (<code>Types []string</code>)</h3>
+  <ul class="check">
+    <li class="done"><span class="pill red">red</span> Update <code>storage/mysql/mapper_snapshots_test.go</code> so
+        <code>TestLoadEventsSinceFiltersByTypeAndWatermark</code> seeds
+        <code>Types: []string{"event:a", "event:b"}</code> and drops the <code>TypeNames</code> map. Run
+        (<code>make test.db</code>) — fails to compile (field gone / renamed).</li>
+    <li class="done">In <code>internal/storage/operations.go</code>: remove <code>TypeNames</code>, replace
+        <code>Events []any</code> with <code>Types []string</code>, update the doc comment, and drop the now-unused
+        <code>reflect</code> import.</li>
+    <li class="done">Update <code>Mapper.loadEventsSince</code> to range names directly: <code>for e, name := range op.Types</code>
+        (no <code>TypeNames</code> lookup).</li>
+    <li class="done"><span class="pill green">green</span> <code>make test.db</code> — <code>TestLoadEventsSinceFiltersByTypeAndWatermark</code>
+        and <code>TestLoadEventsSinceEmptyTypeSet</code> pass against MySQL. <em>(Run in isolation via
+        <code>go test -race -run 'TestMapperFixture/TestLoadEventsSince' ./storage/mysql/</code> — the storage/mysql package
+        doesn't import <code>snapshots</code>, so it compiles before Phase 3; full <code>make test.db</code> runs at Phase 4.)</em></li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h3>Phase 3 — Remove <code>DomainEvents</code>; gate replay on <code>RegisteredEvents</code></h3>
+  <ul class="check">
+    <li class="done"><span class="pill red">red</span> In <code>snapshots/load_test.go</code>, drop the
+        <code>LoadOptions.DomainEvents(...)</code> calls (the replay tests already pass <code>RegisteredEvents(...)</code>),
+        and give the <code>applicatorSpy</code> typed <code>Apply(eventAlpha)</code> / <code>Apply(eventBeta)</code> methods so
+        discovery has something to find. Run — fails to compile (<code>DomainEvents</code> undefined).</li>
+    <li class="done">In <code>snapshots/contracts.go</code>: add
+        <code>errUnregisteredEventType</code>.</li>
+    <li class="done">In <code>snapshots/load.go</code>: delete the <code>DomainEvents</code> option and the
+        <code>loadConfig.DomainEvents</code> field; drop <code>LoadOptions.DomainEvents()</code> from
+        <code>defaults()</code>; expand the <code>RegisteredEvents</code> doc comment to note its replay-opt-in role; remove
+        the <code>TODO</code>.</li>
+    <li class="done">Rewrite the <code>load()</code> replay branch: gate on <code>len(config.EventRegistry.NamesByType) != 0</code>, call
+        <code>domainscan.AppliedTypes(config.Domain)</code>, short-circuit when empty, resolve each type to its name via
+        <code>NamesByType</code> (else return <code>errUnregisteredEventType</code>), and pass the composed
+        <code>[]string</code> into <code>storage.LoadEventsSince{Types: ...}</code>.</li>
+    <li class="done"><span class="pill green">green</span> <code>go test ./snapshots/...</code> — replay, no-registry (skip),
+        registry-but-empty-domain, unregistered-type-error, unsupported-type, and error-propagation cases pass.</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h3>Phase 4 — New coverage &amp; full verification</h3>
+  <ul class="check">
+    <li class="done">Add snapshots tests: (a) registry provided + domain with no typed <code>Apply</code> methods → no event query,
+        no error; (b) registry provided + a type the domain applies but absent from <code>RegisteredEvents</code> →
+        <code>Load</code> returns <code>errUnregisteredEventType</code> and applies the snapshot but no events;
+        (c) no registry → snapshot applied, no event query.</li>
+    <li class="done">Confirm <code>snapshots</code> package coverage holds (aim to restore toward the prior ~93%+); confirm
+        <code>internal/domainscan</code> at 100%. <em>(Result: snapshots 97.1%, domainscan 100.0%.)</em></li>
+    <li class="done"><span class="pill green">green</span> <code>make test.db</code> — full module: <code>go fmt</code>, vet, race, coverage,
+        and the live-MySQL <code>sqladapter</code>/<code>mapper</code> suites all pass.</li>
+  </ul>
+</div>
+
+<h2>Files touched</h2>
+<table>
+  <tr><th>File</th><th>Change</th></tr>
+  <tr><td><code>internal/domainscan/scan.go</code></td><td><strong>new</strong> — exported predicates + <code>AppliedTypes</code></td></tr>
+  <tr><td><code>internal/domainscan/scan_test.go</code></td><td><strong>new</strong> — predicate + <code>AppliedTypes</code> tests</td></tr>
+  <tr><td><code>internal/pipeline/scanner.go</code></td><td>delegate to <code>domainscan</code>; drop local predicates</td></tr>
+  <tr><td><code>internal/storage/operations.go</code></td><td>drop <code>TypeNames</code>; <code>Events []any</code> → <code>Types []string</code>; drop <code>reflect</code> import</td></tr>
+  <tr><td><code>storage/mysql/mapper.go</code></td><td><code>loadEventsSince</code> ranges names directly (no registry lookup)</td></tr>
+  <tr><td><code>storage/mysql/mapper_snapshots_test.go</code></td><td>seed <code>Types []string</code>; drop <code>TypeNames</code></td></tr>
+  <tr><td><code>snapshots/contracts.go</code></td><td>add <code>errUnregisteredEventType</code></td></tr>
+  <tr><td><code>snapshots/load.go</code></td><td>delete <code>DomainEvents</code> option + field; gate replay on registry; <code>load()</code> discovery/validation wiring; expand <code>RegisteredEvents</code> doc; remove TODO</td></tr>
+  <tr><td><code>snapshots/load_test.go</code></td><td>update existing tests; add discovery/error cases</td></tr>
+</table>
+
+<div class="callout">
+  <span class="lbl">Next step</span>
+  Review and reply in chat with feedback, or approval to proceed (or invoke <code>/engage</code>).
+  <strong>No code will be written until you approve.</strong>
+</div>
+
+</div>
+</body>
+</html>

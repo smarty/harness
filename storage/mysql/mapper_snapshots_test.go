@@ -1,7 +1,6 @@
 package mysql
 
 import (
-	"reflect"
 	"time"
 
 	"github.com/smarty/gunit/v2/assert/better"
@@ -114,11 +113,7 @@ func (this *MapperFixture) TestLoadEventsSinceFiltersByTypeAndWatermark() {
 
 	op := &storage.LoadEventsSince{
 		HighWatermark: below,
-		Events:        []any{sampleEventA{}, sampleEventB{}},
-		TypeNames: map[reflect.Type]string{
-			reflect.TypeOf(sampleEventA{}): "event:a",
-			reflect.TypeOf(sampleEventB{}): "event:b",
-		},
+		Types:         []string{"event:a", "event:b"},
 	}
 	this.So(this.subject.Exec(this.ctx, op), should.BeNil)
 
@@ -133,8 +128,7 @@ func (this *MapperFixture) TestLoadEventsSinceEmptyTypeSet() {
 
 	op := &storage.LoadEventsSince{
 		HighWatermark: 0,
-		Events:        nil,
-		TypeNames:     map[reflect.Type]string{},
+		Types:         nil,
 	}
 	// No types resolve: the handler errors out rather than emitting a malformed `IN ()`.
 	this.So(this.subject.Exec(this.ctx, op), should.NOT.BeNil)

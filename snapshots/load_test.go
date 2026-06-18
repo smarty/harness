@@ -105,11 +105,34 @@ func (this *loadStorageStub) Exec(_ context.Context, operation any) error {
 	}
 }
 
+// applicatorSpy records every applied message through the generic Apply, while
+// its typed Apply<Foo> methods exist solely so domainscan can discover which
+// event types this domain handles.
 type applicatorSpy struct{ applied []any }
 
 func (this *applicatorSpy) Apply(message any) {
 	this.applied = append(this.applied, message)
 }
+func (this *applicatorSpy) ApplyEventAlpha(eventAlpha) {}
+func (this *applicatorSpy) ApplyEventBeta(eventBeta)   {}
+
+// bareApplicator handles the snapshot but declares no typed event handlers.
+type bareApplicator struct{ applied []any }
+
+func (this *bareApplicator) Apply(message any) {
+	this.applied = append(this.applied, message)
+}
+
+// eventGamma is deliberately absent from the registered-events maps.
+type eventGamma struct{ Order int }
+
+// gammaApplicator applies an event type that is not registered.
+type gammaApplicator struct{ applied []any }
+
+func (this *gammaApplicator) Apply(message any) {
+	this.applied = append(this.applied, message)
+}
+func (this *gammaApplicator) ApplyEventGamma(eventGamma) {}
 
 func (this *LoadFixture) TestLatestPlainJSONLoadedAndAppliedToDomain() {
 	db := &loadStorageStub{latest: storage.LoadedSnapshotResult{
@@ -274,7 +297,6 @@ func (this *LoadFixture) TestEventsSinceWatermarkAppliedAfterSnapshot() {
 		LoadOptions.Storage(db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(state),
-		LoadOptions.DomainEvents(eventAlpha{}, eventBeta{}),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
 	)
 
@@ -291,7 +313,7 @@ func (this *LoadFixture) TestEventsSinceWatermarkAppliedAfterSnapshot() {
 	this.So(db.capturedQuery.HighWatermark, should.Equal, uint64(3))
 }
 
-func (this *LoadFixture) TestNoDomainEventsSkipsEventQuery() {
+func (this *LoadFixture) TestNoRegistrySkipsEventQuery() {
 	db := &loadStorageStub{latest: storage.LoadedSnapshotResult{
 		Found:         true,
 		HighWatermark: 4,
@@ -299,6 +321,7 @@ func (this *LoadFixture) TestNoDomainEventsSkipsEventQuery() {
 	}}
 	spy := &applicatorSpy{}
 
+	// No RegisteredEvents provided → replay is not enabled.
 	result, err := Load(this.Context(),
 		LoadOptions.Logger(this),
 		LoadOptions.Storage(db),
@@ -310,6 +333,52 @@ func (this *LoadFixture) TestNoDomainEventsSkipsEventQuery() {
 	this.So(db.capturedQuery, should.BeNil)
 	this.So(result.EventsAppliedCount, should.Equal, uint64(0))
 	this.So(spy.applied, should.Equal, []any{domainState{Name: "only-snapshot", Count: 0}})
+}
+
+func (this *LoadFixture) TestRegistryButDomainAppliesNoEventsSkipsQuery() {
+	db := &loadStorageStub{latest: storage.LoadedSnapshotResult{
+		Found:         true,
+		HighWatermark: 4,
+		Payload:       marshalJSON(domainState{Name: "snapshot-only", Count: 0}),
+	}}
+	domain := &bareApplicator{}
+
+	// Registry provided, but the Domain declares no typed Apply<Foo> methods.
+	result, err := Load(this.Context(),
+		LoadOptions.Logger(this),
+		LoadOptions.Storage(db),
+		LoadOptions.Domain(domain),
+		LoadOptions.LoadedSnapshot(&domainState{}),
+		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
+	)
+
+	this.So(err, should.BeNil)
+	this.So(db.capturedQuery, should.BeNil)
+	this.So(result.EventsAppliedCount, should.Equal, uint64(0))
+	this.So(domain.applied, should.Equal, []any{domainState{Name: "snapshot-only", Count: 0}})
+}
+
+func (this *LoadFixture) TestDomainAppliesUnregisteredEventTypeReturnsError() {
+	db := &loadStorageStub{latest: storage.LoadedSnapshotResult{
+		Found:   true,
+		Payload: marshalJSON(domainState{Name: "snap", Count: 1}),
+	}}
+	domain := &gammaApplicator{}
+
+	// The Domain applies eventGamma, which is absent from the registry.
+	result, err := Load(this.Context(),
+		LoadOptions.Logger(this),
+		LoadOptions.Storage(db),
+		LoadOptions.Domain(domain),
+		LoadOptions.LoadedSnapshot(&domainState{}),
+		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
+	)
+
+	this.So(err, should.WrapError, errUnregisteredEventType)
+	this.So(db.capturedQuery, should.BeNil) // errored before querying storage
+	this.So(result.EventsAppliedCount, should.Equal, uint64(0))
+	// The snapshot is applied before events are resolved:
+	this.So(domain.applied, should.Equal, []any{domainState{Name: "snap", Count: 1}})
 }
 
 func (this *LoadFixture) TestUnsupportedEventTypeReturnsError() {
@@ -329,7 +398,6 @@ func (this *LoadFixture) TestUnsupportedEventTypeReturnsError() {
 		LoadOptions.Storage(db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(&domainState{}),
-		LoadOptions.DomainEvents(eventAlpha{}),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
 	)
 
@@ -355,7 +423,6 @@ func (this *LoadFixture) TestCorruptEventPayloadReturnsError() {
 		LoadOptions.Storage(db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(&domainState{}),
-		LoadOptions.DomainEvents(eventAlpha{}),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
 	)
 
@@ -378,7 +445,6 @@ func (this *LoadFixture) TestEventsStorageErrorPropagates() {
 		LoadOptions.Storage(db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(&domainState{}),
-		LoadOptions.DomainEvents(eventAlpha{}),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
 	)
 
