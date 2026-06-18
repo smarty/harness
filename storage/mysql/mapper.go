@@ -16,15 +16,18 @@ import (
 	"github.com/smarty/harness/v2/internal/storage"
 )
 
-// Mapper leverages a pool of re-usable statement buffers and is safe for concurrent use.
+// Mapper translates storage operations into SQL against the Snapshots and
+// Messages tables. It pools its reusable buffers and holds no other mutable
+// state, so it is safe for concurrent use — which it must be, since the pipeline
+// drives it from the persistence, broadcast, and recovery stages at once.
 type Mapper struct {
 	handle         *sql.DB
 	stride         uint64
 	snapshotsTable string
 	messagesTable  string
 	statements     *generic.PoolT[*statement]
-	legacyWrite    func(context.Context, *sql.Tx, ...any) // Deprecated; never nil — no-op default
-	legacyWrites   []any                                  // Deprecated
+	legacyWrite    func(context.Context, *sql.Tx, ...any) // Deprecated; nil unless WithLegacyWrite is set
+	legacyArgs     *generic.PoolT[*legacyBuffer]          // Deprecated; pooled scratch buffers for the legacy hook
 }
 
 func NewMapper(handle *sql.DB, stride uint64, snapshotsTableName, messagesTableName string) *Mapper {
@@ -34,8 +37,7 @@ func NewMapper(handle *sql.DB, stride uint64, snapshotsTableName, messagesTableN
 		snapshotsTable: snapshotsTableName,
 		messagesTable:  messagesTableName,
 		statements:     generic.NewPoolT(newStatement),
-		legacyWrite:    func(context.Context, *sql.Tx, ...any) {}, // no-op until overridden
-		legacyWrites:   make([]any, 0, legacyWritesBufferCapacity),
+		legacyArgs:     generic.NewPoolT(newLegacyBuffer),
 	}
 }
 
@@ -99,13 +101,21 @@ func (this *Mapper) insertMessages(ctx context.Context, operation *storage.Inser
 
 // Deprecated
 func (this *Mapper) performLegacyWrite(ctx context.Context, tx *sql.Tx, operation *storage.InsertMessages) {
-	this.legacyWrites = generic.Reclaim(this.legacyWrites, legacyWritesBufferCapacity)
-	for _, message := range operation.Messages {
-		this.legacyWrites = append(this.legacyWrites, message.Value)
+	if this.legacyWrite == nil {
+		return // no hook configured: nothing to do, nothing to allocate
 	}
-	// The transaction exists solely so this deprecated hook commits atomically
-	// with the INSERT; it defaults to a no-op, so it is always safe to call.
-	this.legacyWrite(ctx, tx, this.legacyWrites...)
+	// Borrow a reusable buffer from the pool: a frequently-fired hook then does
+	// not allocate per call, yet the Mapper stays safe for concurrent use because
+	// each Get hands back a distinct buffer (no shared mutable field). The
+	// transaction exists solely so this deprecated hook commits atomically with
+	// the INSERT.
+	buffer := this.legacyArgs.Get()
+	defer this.legacyArgs.Put(buffer)
+	buffer.values = generic.Reclaim(buffer.values, legacyWritesBufferCapacity)
+	for _, message := range operation.Messages {
+		buffer.values = append(buffer.values, message.Value)
+	}
+	this.legacyWrite(ctx, tx, buffer.values...)
 }
 func (this *Mapper) insert(ctx context.Context, tx *sql.Tx, messages []*contracts.Message) error {
 	table, err := quoteTableName(this.messagesTable)
@@ -373,6 +383,12 @@ var (
 	tableNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 )
 
-const (
-	legacyWritesBufferCapacity = 64 // Deprecated
-)
+// legacyBuffer is a poolable scratch slice for the deprecated legacy-write hook;
+// reusing it across calls keeps a frequently-fired hook from allocating per call.
+type legacyBuffer struct{ values []any } // Deprecated
+
+func newLegacyBuffer() *legacyBuffer {
+	return &legacyBuffer{values: make([]any, 0, legacyWritesBufferCapacity)}
+}
+
+const legacyWritesBufferCapacity = 64 // Deprecated

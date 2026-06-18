@@ -82,7 +82,7 @@
 
 <h2>Verdict</h2>
 <p><em>This is a follow-up review covering only what changed since the <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html">2026-06-12 adversarial review</a> (commit <code>2605ea5</code>), whose 17 findings are all disposed. It does not re-litigate those.</em></p>
-<p><strong>Both blockers resolved (2026-06-18); no HIGH/MEDIUM findings remain open.</strong> Between <code>2605ea5</code> and <code>73d777a</code> a large new subsystem landed: the old <code>sqladapter/</code> package was split into <code>internal/adapters/</code> (Writer/Dispatcher/Recovery) plus a new exported <code>storage/mysql.Mapper</code>; a storage seam funnels every database operation through <code>Exec(ctx, any)</code>; and two brand-new public packages appeared — <code>snapshots/</code> (Load/Save with event replay) and <code>storage/mysql/</code>. The pipeline internals reviewed last time are essentially unchanged and remain solid. <strong>D1</strong> (README/CLAUDE.md referenced the deleted <code>sqladapter</code> API and would not compile) is fixed — the docs now show <code>Options.Storage(mysql.NewMapper(...))</code> and document the <code>snapshots</code> package. <strong>D2</strong> (the storage seam advertised pluggability the module won't deliver) is fixed by relocating the interface from <code>contracts</code> into <code>internal/storage</code>, making it module-private. What remains is all LOW/INFO and tag-at-discretion: <strong>D3 is also fixed</strong> (the dormant trailing-comma SQL bug — <code>LoadEventsSince.Types</code> is now a set, so duplicates can't be expressed); the open items are a doc-precision overclaim (D4), a watermark footgun (D5), and minor/defensive notes (D6). The DB-backed <code>storage/mysql</code> suite was run this pass (<code>make test.db</code>, green under <code>-race</code>, 94.2% coverage), so the real INSERT/stride/recovery/snapshot/event paths are exercised.</p>
+<p><strong>Clear to tag — all seven findings disposed (2026-06-18).</strong> Between <code>2605ea5</code> and <code>73d777a</code> a large new subsystem landed: the old <code>sqladapter/</code> package was split into <code>internal/adapters/</code> (Writer/Dispatcher/Recovery) plus a new exported <code>storage/mysql.Mapper</code>; a storage seam funnels every database operation through <code>Exec(ctx, any)</code>; and two brand-new public packages appeared — <code>snapshots/</code> (Load/Save with event replay) and <code>storage/mysql/</code>. The pipeline internals reviewed last time are essentially unchanged and remain solid. The two blockers are fixed: <strong>D1</strong> (README/CLAUDE.md referenced the deleted <code>sqladapter</code> API and would not compile) — the docs now show <code>Options.Storage(mysql.NewMapper(...))</code> and document the <code>snapshots</code> package; <strong>D2</strong> (the storage seam advertised pluggability the module won't deliver) — the interface was relocated from <code>contracts</code> into <code>internal/storage</code>, making it module-private. The rest are closed too: <strong>D3</strong> (trailing-comma SQL bug — <code>LoadEventsSince.Types</code> is now a set, so duplicates can't be expressed); <strong>D4</strong> (the <code>Mapper</code>'s "safe for concurrent use" claim made true by deleting its one shared mutable field); <strong>D5</strong> (<code>NewHighWatermark</code> now defaults to <code>PreviousHighWatermark</code> instead of a misleading zero); and <strong>D6</strong> (recovery underflow guard + non-pointer snapshot default fixed; the hard-coded JSON content-type consciously deferred to the schema-migration backlog, per F15). The full suite is green with and without <code>-race</code>, and the DB-backed <code>storage/mysql</code> suite was run this pass (<code>make test.db</code>, green under <code>-race</code>, ~94% coverage), exercising the real INSERT/stride/recovery/snapshot/event paths. The only carried item is the documented content-type deferral.</p>
 
 <div class="summary-grid" id="summaryGrid"></div>
 
@@ -106,7 +106,7 @@
     <span><span class="dot" style="background:var(--info)"></span>Won't fix <b id="nWontFix">0</b></span>
     <span><span class="dot" style="background:var(--panel2);border:1px solid var(--border)"></span>Open <b id="nOpen">0</b></span>
   </div>
-  <div id="progressHint">Status lives in this file (each entry's <code>state</code> field in the FINDINGS array) and is committed to git — update it as issues are resolved. Finding bodies live in <code>&lt;template&gt;</code> elements; everything else on this page is rendered from the data. Last status update: 2026-06-18 (D1, D2, D3 resolved — docs rewritten; storage seam made module-private; LoadEventsSince.Types is now a set).</div>
+  <div id="progressHint">Status lives in this file (each entry's <code>state</code> field in the FINDINGS array) and is committed to git — update it as issues are resolved. Finding bodies live in <code>&lt;template&gt;</code> elements; everything else on this page is rendered from the data. Last status update: 2026-06-18 (all seven disposed — D1–D6 fixed, D7 informational; one content-type item consciously deferred).</div>
 </div>
 <div class="filters" id="filters"></div>
 <div id="findings"></div>
@@ -191,6 +191,8 @@ func (this *Mapper) performLegacyWrite(ctx, tx, operation) {
 }</code></pre>
     <p>It is safe <em>as the pipeline drives it</em> — only the single persistence goroutine ever issues <code>InsertMessages</code>, and no other operation touches <code>legacyWrites</code> — so this is not a live race in the shipped wiring. But two concurrent <code>InsertMessages</code> calls on a shared <code>Mapper</code> (which the blanket "safe for concurrent use" invites a consumer to do) would race on that slice and corrupt the legacy hook's argument list. <code>-race</code> would not catch it today because the pipeline never makes that call concurrently.</p>
     <p><strong>Recommendation:</strong> either qualify the doc ("safe for concurrent use except for concurrent message inserts, which the pipeline never issues"), or scope <code>legacyWrites</code> to the call (build it as a local, or borrow it from the statement). Low stakes — <code>legacyWrite</code> is an explicitly deprecated migration hook that defaults to a no-op — but the doc currently overpromises.</p>
+    <hr>
+    <p><strong>RESOLVED 2026-06-18 — the claim is now true, and the hot path still does not allocate.</strong> The shared instance-level <code>legacyWrites</code> slice (the only mutable state the Mapper touched outside its pooled statement buffers) was removed. An initial cut scoped a fresh slice to each call, but the legacy hook fires on every insert in migrating deployments, so a per-call allocation was the wrong trade. The committed fix borrows the buffer from a dedicated <code>sync.Pool</code> (<code>legacyArgs *generic.PoolT[*legacyBuffer]</code>): <code>performLegacyWrite</code> early-returns when no hook is configured (<code>legacyWrite</code> defaults to <code>nil</code> — common path allocates nothing), otherwise <code>Get</code>s a buffer, reclaims it to its working capacity via <code>generic.Reclaim</code> (so an oversized batch is not pinned), fills it, and <code>Put</code>s it back on <code>defer</code>. That is allocation-free in steady state <em>and</em> concurrency-safe — each <code>Get</code> returns a distinct buffer, so there is no shared mutable field. The Mapper now holds no shared mutable state during <code>Exec</code> (handle, stride, table names, and both pools are immutable or internally synchronized), so the type-level "safe for concurrent use" comment — which the pipeline depends on, driving the Mapper from the persistence, broadcast, and recovery stages simultaneously — is literally correct rather than aspirational. Verified: <code>go build</code>/<code>go vet</code> clean; full <code>make test</code> green with and without <code>-race</code>; DB-backed <code>storage/mysql</code> suite green under <code>-race</code> (94.4% coverage), with <code>TestInsert_LegacyWrite_ReceivesValuesAndCommitsInSameTransaction</code> and <code>TestInsert_LegacyWritePanic_RollsBackInsert</code> exercising the pooled path.</p>
 </template>
 
 <template id="body-D5">
@@ -201,6 +203,8 @@ this.So(result.NewHighWatermark,      should.Equal, uint64(0))   // &lt;-- 0, no
 this.So(result.EventsAppliedCount,    should.Equal, uint64(0))</code></pre>
     <p>Because it is tested, treat this as a <em>footgun to document</em> rather than an outright defect. The hazard: a caller who rebuilds a domain, then persists a fresh snapshot using <code>result.NewHighWatermark</code> without first checking <code>EventsAppliedCount &gt; 0</code>, will write a snapshot at watermark <strong>0</strong> — silently corrupting the watermark chain (a later <code>Load</code> would then replay the entire event history from the beginning). The natural reading of a field named <code>NewHighWatermark</code> is "&ge; the previous one," and <code>0</code> violates that.</p>
     <p><strong>Recommendation:</strong> default <code>result.NewHighWatermark</code> to <code>PreviousHighWatermark</code> when no events are applied (so it always denotes "the domain reflects everything through this id"), or, if the current semantics are deliberate, document on <code>LoadResult.NewHighWatermark</code> that it is only meaningful when <code>EventsAppliedCount &gt; 0</code> and is otherwise zero.</p>
+    <hr>
+    <p><strong>RESOLVED 2026-06-18 — defaults to <code>PreviousHighWatermark</code>.</strong> Took the first option. <code>load()</code> now seeds <code>result.NewHighWatermark</code> to the loaded snapshot's watermark up front (right beside <code>PreviousHighWatermark</code>), and the post-replay assignment only <em>advances</em> it (<code>if loadEvents.Result.NewHighWatermark &gt; result.NewHighWatermark</code>). So on every no-replay path — replay not opted in, the domain applies no event types, or the query returns nothing — <code>NewHighWatermark</code> equals <code>PreviousHighWatermark</code> rather than a misleading zero, and is always safe to feed straight back into <code>Save</code>. The <code>LoadResult.NewHighWatermark</code> doc comment and the README's snapshot note were updated to match. Tests: <code>TestLatestPlainJSONLoadedAndAppliedToDomain</code> now asserts <code>42</code> (was <code>0</code>); the two skip tests (<code>TestNoRegistrySkipsEventQuery</code>, <code>TestRegistryButDomainAppliesNoEventsSkipsQuery</code>) now assert <code>NewHighWatermark == 4</code> (the snapshot watermark); <code>TestEventsSinceWatermarkAppliedAfterSnapshot</code> still asserts the advanced value. Full suite green, 99% statement coverage in <code>snapshots</code> retained.</p>
 </template>
 
 <template id="body-D6">
@@ -209,6 +213,14 @@ this.So(result.EventsAppliedCount,    should.Equal, uint64(0))</code></pre>
       <li><strong><code>LoadOptions.LoadedSnapshot</code> default is a non-pointer.</strong> <code>snapshots/load.go:119</code> defaults <code>LoadedSnapshot</code> to <code>struct{}{}</code>. If a caller omits the option but a snapshot exists, <code>json.Unmarshal</code> fails with an opaque "non-pointer" error (and the later <code>reflect.Value.Elem()</code> would panic if it got that far). Harmless in practice — the option is always supplied — but a clearer default or an explicit "you must supply LoadedSnapshot" check would be friendlier.</li>
       <li><strong>Hard-coded <code>ContentType: "application/json"</code> persists into the recovery/snapshot paths.</strong> <code>mapper.go:241</code> (page load) and <code>save.go:72</code> both hard-code JSON, consistent with the deferred F15 decision from the prior review. Correct for the only serializer shipping today; still belongs on the schema-migration backlog when a <code>content_type</code> column lands.</li>
     </ul>
+    <hr>
+    <p><strong>RESOLVED 2026-06-18 — two of three fixed; the content-type stays deferred.</strong></p>
+    <ul>
+      <li><strong>Recovery <code>Min-1</code> underflow — fixed.</strong> <code>adapters/recovery.go</code> now guards the subtraction: <code>boundary = op.Max</code> always, and <code>cursor = op.Min - 1</code> only <code>if op.Min &gt; 0</code>. A degenerate <code>Min == 0</code> leaves the cursor at its zero value, so the page window is <code>id &gt; 0</code> instead of underflowing to <code>MaxUint64</code> (which would make <code>cursor &gt;= boundary</code> and silently skip the whole backlog). New unit test <code>TestMinIDZero_DoesNotUnderflowCursorAndStillRecovers</code> discriminates the regression (it fails without the guard because no page query is issued).</li>
+      <li><strong><code>LoadedSnapshot</code> non-pointer default — fixed.</strong> The default changed from <code>struct{}{}</code> to <code>new(struct{})</code> (a pointer), matching the option's own "zero-value pointer" contract and removing the opaque <code>json.Unmarshal(non-pointer)</code> / <code>reflect.Value.Elem()</code> failure path when a caller omits the option but a snapshot exists.</li>
+      <li><strong>Hard-coded <code>application/json</code> ContentType — deferred (unchanged).</strong> Consistent with the prior review's F15 disposition: correct for today's only serializer, carries a TODO, and belongs to the schema-migration backlog rather than this gate.</li>
+    </ul>
+    <p>Verified: build/vet clean; full <code>make test</code> green with and without <code>-race</code> (100% coverage retained in <code>internal/adapters</code>); DB-backed <code>storage/mysql</code> suite green under <code>-race</code>.</p>
 </template>
 
 <template id="body-D7">
@@ -223,7 +235,9 @@ this.So(result.EventsAppliedCount,    should.Equal, uint64(0))</code></pre>
       <li><strong>Schema alignment</strong>: <code>doc/mysql/schema.sql</code> (<code>Snapshots</code> + <code>Messages</code>) matches every column the Mapper reads/writes (<code>created</code>, <code>high_watermark</code>, <code>payload</code>, <code>content_type</code>, <code>content_encoding</code>; <code>id</code>, <code>dispatched</code>, <code>type</code>, <code>payload</code>).</li>
       <li><strong>Build &amp; short tests</strong>: <code>go build ./...</code> clean; <code>make test</code> (<code>-short</code>, with and without <code>-race</code>) green in root, contracts, adapters, domainscan, generic, pipeline, snapshots, and storage/mysql.</li>
     </ul>
-    <p><em>Not verified this pass:</em> the DB-backed <code>storage/mysql</code> suite (<code>make test.db</code>) was not run here — it needs a live MySQL. Run it before tagging to exercise the real INSERT/stride/recovery/snapshot paths end-to-end.</p>
+    <p><em>Update 2026-06-18:</em> the DB-backed <code>storage/mysql</code> suite (<code>make test.db</code>) has now been run against a live MySQL, green under <code>-race</code> (~94% statement coverage), exercising the real INSERT/stride/recovery/snapshot/event paths end-to-end.</p>
+    <hr>
+    <p><strong>Closed 2026-06-18 — informational, no action required.</strong> This entry is the list of properties checked and confirmed correct; there was never anything to remediate. Marked resolved so it leaves the open count, mirroring F16 in the prior review.</p>
 </template>
 
 </main>
@@ -250,22 +264,22 @@ this.So(result.EventsAppliedCount,    should.Equal, uint64(0))</code></pre>
       loc: 'storage/mysql/mapper.go · internal/storage/operations.go',
     },
     {
-      id: 'D4', severity: 'LOW', state: 'open', evidence: 'BY INSPECTION',
+      id: 'D4', severity: 'LOW', state: 'fixed', evidence: 'BY INSPECTION',
       title: '<code>Mapper</code> documents "safe for concurrent use" but <code>legacyWrites</code> is unsynchronized shared state',
       loc: 'storage/mysql/mapper.go:18,100-108',
     },
     {
-      id: 'D5', severity: 'LOW', state: 'open', evidence: 'BY INSPECTION',
+      id: 'D5', severity: 'LOW', state: 'fixed', evidence: 'BY INSPECTION',
       title: '<code>snapshots.Load</code> returns <code>NewHighWatermark=0</code> when no events replay — watermark footgun on Save',
       loc: 'snapshots/load.go:166-201 · load_test.go:155',
     },
     {
-      id: 'D6', severity: 'INFO', state: 'open', evidence: null,
+      id: 'D6', severity: 'INFO', state: 'fixed', evidence: null,
       title: 'Minor / defensive: recovery <code>Min-1</code> underflow, non-pointer <code>LoadedSnapshot</code> default, hard-coded JSON ContentType',
       loc: 'adapters/recovery.go:56 · snapshots/load.go:119 · mapper.go:241',
     },
     {
-      id: 'D7', severity: 'INFO', state: 'open', evidence: null,
+      id: 'D7', severity: 'INFO', state: 'fixed', evidence: null,
       title: 'Things checked in the new code that are <em>fine</em> (so you don\'t have to re-check)',
       loc: '',
     },
