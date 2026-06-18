@@ -53,8 +53,13 @@ func (this *Recovery) snapshot(ctx context.Context) error {
 		return err
 	}
 	if op.Found {
-		this.cursor = op.Min - 1 // auto-increment ids start at 1, so no underflow
 		this.boundary = op.Max
+		if op.Min > 0 {
+			// Exclusive lower bound. Guard the subtraction: auto-increment ids
+			// start at 1 so Min is normally >= 1, but a Min of 0 would underflow
+			// cursor to MaxUint64 and silently skip the entire backlog.
+			this.cursor = op.Min - 1
+		}
 	}
 	this.snapshotted = true
 	return nil

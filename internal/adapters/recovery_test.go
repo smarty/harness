@@ -89,6 +89,18 @@ func (this *RecoveryFixture) TestCursorStartsAtMinMinusOne_BoundaryIsMax() {
 	this.So(this.db.firstPage.ThroughID, should.Equal, uint64(7)) // Max
 }
 
+func (this *RecoveryFixture) TestMinIDZero_DoesNotUnderflowCursorAndStillRecovers() {
+	// A degenerate Min of 0 must not underflow cursor to MaxUint64 (which would
+	// make cursor >= boundary and silently skip the whole backlog); recovery must
+	// still issue a real page query.
+	this.db.rows = []fakeRow{{id: 0}, {id: 1}, {id: 2}}
+
+	messages := this.drain(64)
+
+	this.So(this.db.pageCalls, should.Equal, 1)          // a real page query ran, not skipped
+	this.So(ids(messages), should.Equal, []uint64{1, 2}) // id 0 falls outside the exclusive id > 0 window
+}
+
 func (this *RecoveryFixture) TestAdvancesToLastIDAfterCleanPage() {
 	this.db.rows = []fakeRow{{id: 5}, {id: 6}, {id: 7}, {id: 8}}
 
