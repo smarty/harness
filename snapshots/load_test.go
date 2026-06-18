@@ -134,6 +134,11 @@ func (this *gammaApplicator) Apply(message any) {
 }
 func (this *gammaApplicator) ApplyEventGamma(eventGamma) {}
 
+func (this *LoadFixture) TestNop() {
+	this.So(func() { loadNop{}.Apply(nil) }, should.NOT.Panic)
+	this.So(loadNop{}.Exec(nil, nil), should.BeNil)
+}
+
 func (this *LoadFixture) TestLatestPlainJSONLoadedAndAppliedToDomain() {
 	db := &loadStorageStub{latest: storage.LoadedSnapshotResult{
 		Found:         true,
