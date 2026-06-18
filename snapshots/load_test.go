@@ -157,7 +157,7 @@ func (this *LoadFixture) TestLatestPlainJSONLoadedAndAppliedToDomain() {
 
 	this.So(err, should.BeNil)
 	this.So(result.PreviousHighWatermark, should.Equal, uint64(42))
-	this.So(result.NewHighWatermark, should.Equal, uint64(0))
+	this.So(result.NewHighWatermark, should.Equal, uint64(42)) // no replay: stays at the snapshot watermark, not zero
 	this.So(result.EventsAppliedCount, should.Equal, uint64(0))
 	this.So(result.LoadedSnapshot, should.Equal, state)
 	this.So(*state, should.Equal, domainState{Name: "alpha", Count: 7})
@@ -354,6 +354,7 @@ func (this *LoadFixture) TestNoRegistrySkipsEventQuery() {
 	this.So(err, should.BeNil)
 	this.So(db.capturedQuery, should.BeNil)
 	this.So(result.EventsAppliedCount, should.Equal, uint64(0))
+	this.So(result.NewHighWatermark, should.Equal, uint64(4)) // no replay: equals the snapshot watermark
 	this.So(spy.applied, should.Equal, []any{domainState{Name: "only-snapshot", Count: 0}})
 }
 
@@ -377,6 +378,7 @@ func (this *LoadFixture) TestRegistryButDomainAppliesNoEventsSkipsQuery() {
 	this.So(err, should.BeNil)
 	this.So(db.capturedQuery, should.BeNil)
 	this.So(result.EventsAppliedCount, should.Equal, uint64(0))
+	this.So(result.NewHighWatermark, should.Equal, uint64(4)) // no replay: equals the snapshot watermark
 	this.So(domain.applied, should.Equal, []any{domainState{Name: "snapshot-only", Count: 0}})
 }
 

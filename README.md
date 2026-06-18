@@ -289,7 +289,7 @@ err = snapshots.Save(ctx,
 )
 ```
 
-`LoadResult.NewHighWatermark` is only populated when events were actually replayed (`EventsAppliedCount > 0`); when no replay happens it is zero. Guard your `Save` accordingly — persisting a snapshot at watermark zero would force a full replay on the next load.
+`LoadResult.NewHighWatermark` is the id through which the domain now reflects events; when no events are replayed it equals `PreviousHighWatermark` (the snapshot's watermark) rather than zero, so it is always safe to hand straight back to `Save`.
 
 
 ## Building and testing

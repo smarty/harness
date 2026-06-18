@@ -41,7 +41,7 @@ func Load(ctx context.Context, options ...loadOption) (LoadResult, error) {
 type LoadResult struct {
 	LoadedSnapshot        any    // as initially loaded from storage
 	PreviousHighWatermark uint64 // of the LoadedSnapshot
-	NewHighWatermark      uint64 // of the Domain after applying events since previous high watermark
+	NewHighWatermark      uint64 // high watermark of the Domain after replay; equals PreviousHighWatermark when no events were applied
 	EventsAppliedCount    uint64 // how many events were applied to the Domain
 }
 
@@ -115,7 +115,7 @@ func (loading) defaults(options ...loadOption) []loadOption {
 		LoadOptions.SnapshotID(Latest),
 		LoadOptions.Domain(nop),
 		LoadOptions.RegisteredEvents(nil, nil),
-		LoadOptions.LoadedSnapshot(struct{}{}),
+		LoadOptions.LoadedSnapshot(new(struct{})), // a harmless pointer: callers normally supply a real target
 	}, options...)
 }
 
@@ -159,6 +159,7 @@ func load(ctx context.Context, config loadConfig) (result LoadResult, err error)
 	}
 	config.Logger.Printf("[INFO] loaded snapshot at high watermark %d", loadedSnapshotResult.HighWatermark)
 	result.PreviousHighWatermark = loadedSnapshotResult.HighWatermark
+	result.NewHighWatermark = loadedSnapshotResult.HighWatermark // baseline; advances below only if events replay
 	result.LoadedSnapshot = config.LoadedSnapshot
 	config.Domain.Apply(reflect.ValueOf(result.LoadedSnapshot).Elem().Interface()) // de-reference the pointer so the domain will load, not save
 
@@ -197,7 +198,9 @@ func load(ctx context.Context, config loadConfig) (result LoadResult, err error)
 		result.EventsAppliedCount++
 		config.Domain.Apply(pointer.Elem().Interface())
 	}
-	result.NewHighWatermark = loadEvents.Result.NewHighWatermark
+	if loadEvents.Result.NewHighWatermark > result.NewHighWatermark {
+		result.NewHighWatermark = loadEvents.Result.NewHighWatermark
+	}
 
 	return result, nil
 }
