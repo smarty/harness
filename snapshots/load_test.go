@@ -253,6 +253,23 @@ func (this *LoadFixture) TestSnapshotStorageErrorPropagates() {
 	this.So(spy.applied, should.BeNil)
 }
 
+func (this *LoadFixture) TestSpecificSnapshotStorageErrorPropagates() {
+	boom := fmt.Errorf("database unavailable")
+	db := &loadStorageStub{snapshotErr: boom}
+	spy := &applicatorSpy{}
+
+	_, err := Load(this.Context(),
+		LoadOptions.Logger(this),
+		LoadOptions.Storage(db),
+		LoadOptions.SnapshotID(5),
+		LoadOptions.Domain(spy),
+		LoadOptions.LoadedSnapshot(&domainState{}),
+	)
+
+	this.So(err, should.WrapError, boom)
+	this.So(spy.applied, should.BeNil)
+}
+
 func (this *LoadFixture) TestSpecificSnapshotLoadedByID() {
 	db := &loadStorageStub{byID: storage.LoadedSnapshotResult{
 		Found:         true,
