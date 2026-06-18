@@ -123,6 +123,25 @@ func (this *MapperFixture) TestLoadEventsSinceFiltersByTypeAndWatermark() {
 	this.So(op.Result.NewHighWatermark, should.Equal, idB)
 }
 
+func (this *MapperFixture) TestLoadEventsSinceDeduplicatesTypesIncludingTrailingDuplicate() {
+	_ = this.seedMessage("event:a", `{"x":1}`)
+	idB := this.seedMessage("event:b", `{"x":2}`)
+
+	// A duplicate type name — here the trailing one — must collapse to a single
+	// placeholder without leaving a dangling comma (`IN (?,?,)`), which would be
+	// a MySQL syntax error rather than a successful query.
+	op := &storage.LoadEventsSince{
+		HighWatermark: 0,
+		Types:         []string{"event:a", "event:b", "event:b"},
+	}
+	this.So(this.subject.Exec(this.ctx, op), should.BeNil)
+
+	this.So(len(op.Result.Events), better.Equal, 2)
+	this.So(op.Result.Events[0], should.Equal, storage.Event{Type: "event:a", Payload: []byte(`{"x":1}`)})
+	this.So(op.Result.Events[1], should.Equal, storage.Event{Type: "event:b", Payload: []byte(`{"x":2}`)})
+	this.So(op.Result.NewHighWatermark, should.Equal, idB)
+}
+
 func (this *MapperFixture) TestLoadEventsSinceEmptyTypeSet() {
 	_ = this.seedMessage("event:a", `{"x":1}`)
 
