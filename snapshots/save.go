@@ -33,18 +33,27 @@ var SaveOptions saving
 
 type saving struct{}
 
+// Storage is used by Save to perform storage operations to save
+// the provided snapshot record.
 func (saving) Storage(storage contracts.Storage) saveOption {
 	return func(config *saveConfig) { config.Storage = storage }
 }
+
+// Timestamp is the timestamp of the Snapshot record.
 func (saving) Timestamp(timestamp time.Time) saveOption {
 	return func(config *saveConfig) { config.Timestamp = timestamp }
 }
+
+// HighWatermark is the ID of the most recently applied message.
 func (saving) HighWatermark(highWatermark uint64) saveOption {
 	return func(config *saveConfig) { config.HighWatermark = highWatermark }
 }
+
+// Snapshot is the snapshot value, soon to be encoded for storage.
 func (saving) Snapshot(snapshot any) saveOption {
 	return func(config *saveConfig) { config.Snapshot = snapshot }
 }
+
 func (saving) defaults(options ...saveOption) []saveOption {
 	return append([]saveOption{
 		SaveOptions.Timestamp(time.Now().UTC()),

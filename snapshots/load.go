@@ -71,24 +71,43 @@ type loading struct{}
 func (loading) Logger(logger logger) loadOption {
 	return func(config *loadConfig) { config.Logger = logger }
 }
+
+// Storage is used by Load to perform storage operations to retrieve
+// the specified snapshot and events since its high watermark.
 func (loading) Storage(storage contracts.Storage) loadOption {
 	return func(config *loadConfig) { config.Storage = storage }
 }
+
+// SnapshotID provides the ID of the specific snapshot to load.
+// Providing Latest will load the most recently saved snapshot.
 func (loading) SnapshotID(snapshotID uint64) loadOption {
 	return func(config *loadConfig) { config.SnapshotID = snapshotID }
 }
+
+// Domain provides the object that will have the loaded snapshot applied
+// to it, as well as any DomainEvents (since the snapshot's high watermark)
+// that can be loaded.
 func (loading) Domain(domain applicator) loadOption {
 	return func(config *loadConfig) { config.Domain = domain }
 }
+
+// DomainEvents are instances of events that can be handled to the Apply method of object provided to Domain.
+// Passing no events signals that no reply should occur.
+// TODO: scan the domain type to discover which events it can Apply.
 func (loading) DomainEvents(events ...any) loadOption { // if none provided, that indicates the user doesn't want to replay events since the loaded snapshot's high watermark
 	return func(config *loadConfig) { config.DomainEvents = events }
 }
+
+// RegisteredEvents are indices of event types that will need to be instantiated (via reflection) and deserialized.
 func (loading) RegisteredEvents(typesByName map[string]reflect.Type, namesByType map[reflect.Type]string) loadOption {
 	return func(config *loadConfig) {
 		config.EventRegistry.TypesByName = typesByName
 		config.EventRegistry.NamesByType = namesByType
 	}
 }
+
+// LoadedSnapshot is how the caller provides a zero-value pointer to a snapshot,
+// which will be populated by Load.
 func (loading) LoadedSnapshot(pointer any) loadOption {
 	return func(config *loadConfig) { config.LoadedSnapshot = pointer }
 }
