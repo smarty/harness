@@ -49,10 +49,6 @@ type (
 
 // Collaborator interfaces — callers supply real implementations via Options.*
 type (
-	Storage interface {
-		Exec(ctx context.Context, operation any) error
-	}
-
 	Serializer interface {
 		Serialize(out io.Writer, in any) error
 		ContentType() string

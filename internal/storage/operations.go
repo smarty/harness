@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -8,6 +9,18 @@ import (
 )
 
 var ErrUnsupportedOperation = errors.New("harness: unsupported storage operation")
+
+// Storage executes one of the operation types defined in this package against a
+// concrete datastore, populating result fields on the operation by pointer. It
+// is the module-private seam between the pipeline/snapshots and storage: the
+// operation types live in this internal package, so the interface is
+// intentionally not implementable by external callers. The only implementation
+// is storage/mysql.Mapper. Callers wire it via harness.Options.Storage(...),
+// snapshots.LoadOptions.Storage(...), and snapshots.SaveOptions.Storage(...) by
+// passing a concrete *mysql.Mapper; they never name this type.
+type Storage interface {
+	Exec(ctx context.Context, operation any) error
+}
 
 type MarkMessagesDispatched struct {
 	Messages []*contracts.Message

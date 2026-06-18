@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/storage"
 )
 
@@ -21,7 +20,7 @@ func Save(ctx context.Context, options ...saveOption) error {
 }
 
 type saveConfig struct {
-	Storage       contracts.Storage
+	Storage       storage.Storage
 	Timestamp     time.Time
 	HighWatermark uint64
 	Snapshot      any
@@ -35,8 +34,8 @@ type saving struct{}
 
 // Storage is used by Save to perform storage operations to save
 // the provided snapshot record.
-func (saving) Storage(storage contracts.Storage) saveOption {
-	return func(config *saveConfig) { config.Storage = storage }
+func (saving) Storage(store storage.Storage) saveOption {
+	return func(config *saveConfig) { config.Storage = store }
 }
 
 // Timestamp is the timestamp of the Snapshot record.

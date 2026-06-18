@@ -16,15 +16,15 @@ import (
 // that predate startup — so rows persisted by live traffic during the recovery
 // window fall outside the boundary and are left for the live path. An empty
 // page means the backlog is exhausted and recovery is complete. The two SQL
-// queries are routed through the contracts.Storage seam.
+// queries are routed through the storage.Storage seam.
 type Recovery struct {
-	db          contracts.Storage
+	db          storage.Storage
 	cursor      uint64 // advances past each successfully returned page; starts at MIN(id)-1 of the backlog
 	boundary    uint64 // MAX(id) of the backlog, snapshotted on the first call
 	snapshotted bool
 }
 
-func NewRecovery(db contracts.Storage) *Recovery {
+func NewRecovery(db storage.Storage) *Recovery {
 	return &Recovery{db: db}
 }
 

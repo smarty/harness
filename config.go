@@ -51,6 +51,7 @@ import (
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/pipeline"
+	"github.com/smarty/harness/v2/internal/storage"
 )
 
 // New constructs a staged, store-and-forward message-handling pipeline.
@@ -106,8 +107,10 @@ func (singleton) Monitor(value contracts.Monitor) option {
 }
 
 // Storage uses the provided db to build and set the Recovery, Writer,
-// and Dispatcher components.
-func (singleton) Storage(db contracts.Storage) option {
+// and Dispatcher components. Pass a concrete storage implementation such as
+// storage/mysql.NewMapper(...); the seam itself is module-private, so the only
+// supported implementation is the bundled MySQL mapper.
+func (singleton) Storage(db storage.Storage) option {
 	return func(this *pipeline.Configuration) { this.Storage = db }
 }
 

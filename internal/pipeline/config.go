@@ -7,11 +7,12 @@ import (
 	"reflect"
 
 	"github.com/smarty/harness/v2/contracts"
+	"github.com/smarty/harness/v2/internal/storage"
 )
 
 type Configuration struct {
 	Monitor                contracts.Monitor
-	Storage                contracts.Storage
+	Storage                storage.Storage
 	Serializer             contracts.Serializer
 	Dispatcher             contracts.Dispatcher
 	MessageTypes           map[reflect.Type]string

@@ -8,17 +8,17 @@ import (
 )
 
 // Writer persists a batch of messages by handing a storage.InsertMessages
-// operation to the contracts.Storage. It holds a reusable buffer for the storage
+// operation to the storage.Storage. It holds a reusable buffer for the storage
 // operation so is not safe for concurrent use. A Writer must be driven
 // from a single goroutine (as the pipeline does).
 type Writer struct {
-	db contracts.Storage
+	db storage.Storage
 	op *storage.InsertMessages
 }
 
 // NewWriter builds a Writer that inserts rows into the `Messages` table via the
-// supplied contracts.Storage.
-func NewWriter(db contracts.Storage) *Writer {
+// supplied storage.Storage.
+func NewWriter(db storage.Storage) *Writer {
 	return &Writer{
 		db: db,
 		op: new(storage.InsertMessages),

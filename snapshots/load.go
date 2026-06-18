@@ -11,7 +11,6 @@ import (
 	"math"
 	"reflect"
 
-	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/domainscan"
 	"github.com/smarty/harness/v2/internal/storage"
 )
@@ -52,7 +51,7 @@ const (
 
 type loadConfig struct {
 	Logger        logger
-	Storage       contracts.Storage
+	Storage       storage.Storage
 	SnapshotID    uint64 // If equal to Latest, load the latest
 	Domain        applicator
 	EventRegistry struct {
@@ -74,8 +73,8 @@ func (loading) Logger(logger logger) loadOption {
 
 // Storage is used by Load to perform storage operations to retrieve
 // the specified snapshot and events since its high watermark.
-func (loading) Storage(storage contracts.Storage) loadOption {
-	return func(config *loadConfig) { config.Storage = storage }
+func (loading) Storage(store storage.Storage) loadOption {
+	return func(config *loadConfig) { config.Storage = store }
 }
 
 // SnapshotID provides the ID of the specific snapshot to load.
