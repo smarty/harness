@@ -128,7 +128,7 @@ func load(ctx context.Context, config loadConfig) (result LoadResult, err error)
 		}
 		loadedSnapshotResult = load.Result
 	} else {
-		load := &storage.LoadSnapshot{}
+		load := &storage.LoadSnapshot{ID: config.SnapshotID}
 		err = config.Storage.Exec(ctx, load)
 		if err != nil {
 			return result, err
