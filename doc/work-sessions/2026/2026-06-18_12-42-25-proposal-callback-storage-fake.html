@@ -1,0 +1,419 @@
+<title>Proposal: Callback-Driven Storage Fake for snapshots tests</title>
+<style>
+  :root {
+    --ink: #1a1d23;
+    --muted: #5b6472;
+    --line: #d9dee5;
+    --bg: #fbfcfd;
+    --accent: #2f6f4f;
+    --accent-bg: #e8f3ec;
+    --warn: #8a5a00;
+    --warn-bg: #fbf2dd;
+    --code-bg: #f4f6f8;
+    --del: #b23b3b;
+    --add: #2f6f4f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.6;
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 5rem;
+  }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 .3rem; letter-spacing: -.01em; }
+  h2 {
+    font-size: 1.3rem; margin: 2.6rem 0 .8rem; padding-bottom: .35rem;
+    border-bottom: 2px solid var(--line); letter-spacing: -.01em;
+  }
+  h3 { font-size: 1.05rem; margin: 1.6rem 0 .5rem; }
+  .sub { color: var(--muted); font-size: .98rem; margin-top: 0; }
+  p { margin: .7rem 0; }
+  code {
+    font-family: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+    font-size: .86em; background: var(--code-bg); padding: .1em .35em; border-radius: 4px;
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 1rem 1.1rem; overflow-x: auto; font-size: .82rem; line-height: 1.5;
+    font-family: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  pre code { background: none; padding: 0; font-size: 1em; }
+  .cmt { color: var(--muted); }
+  .kw { color: #9b2393; }
+  .str { color: #c41a16; }
+  .del { color: var(--del); }
+  .add { color: var(--add); }
+  .pill {
+    display: inline-block; font-size: .72rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .04em; padding: .15em .55em; border-radius: 999px; vertical-align: middle;
+  }
+  .pill-rec { background: var(--accent-bg); color: var(--accent); }
+  .callout {
+    border-left: 4px solid var(--accent); background: var(--accent-bg);
+    padding: .8rem 1.1rem; border-radius: 0 8px 8px 0; margin: 1.2rem 0;
+  }
+  .callout.warn { border-color: var(--warn); background: var(--warn-bg); }
+  .callout p { margin: .3rem 0; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 680px) { .grid2 { grid-template-columns: 1fr; } }
+  .col h4 { margin: 0 0 .4rem; font-size: .82rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .9rem; }
+  th, td { border: 1px solid var(--line); padding: .5rem .7rem; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); font-weight: 600; }
+  ul.check { list-style: none; padding-left: 0; }
+  ul.check li { position: relative; padding-left: 1.7rem; margin: .35rem 0; }
+  ul.check li::before {
+    content: "☐"; position: absolute; left: 0; color: var(--muted); font-size: 1.05rem; top: -.05rem;
+  }
+  .phase {
+    background: #fff; border: 1px solid var(--line); border-radius: 10px;
+    padding: 1rem 1.2rem; margin: 1rem 0;
+  }
+  .phase h3 { margin-top: 0; display: flex; align-items: center; gap: .5rem; }
+  .phase h3 .n {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.6rem; height: 1.6rem; border-radius: 50%; background: var(--accent);
+    color: #fff; font-size: .85rem; font-weight: 700; flex: none;
+  }
+  .yourturn { border: 2px solid var(--accent); border-radius: 10px; padding: 1.2rem 1.4rem; background: #fff; }
+  .yourturn h2 { border: none; margin-top: 0; color: var(--accent); }
+  .muted { color: var(--muted); }
+  .tag { font-size: .78rem; color: var(--muted); }
+  svg { max-width: 100%; height: auto; display: block; margin: 1.2rem auto; }
+</style>
+
+<h1>Callback-Driven Storage Fake for the <code>snapshots</code> tests</h1>
+<p class="sub">Proposal (rev. 3, as built) · 2026-06-18 · package <code>github.com/smarty/harness/v2/snapshots</code></p>
+
+<div class="callout">
+  <p><strong>This document reflects the implemented design.</strong> It started (rev. 2) by mirroring the
+  <code>sales-context/code/http/load_taxable_location_test.go</code> pattern with a <em>type-keyed</em> callback
+  registry embedded on the fixture. During implementation that was simplified: the registry is now an
+  <strong>ordered slice of callbacks consumed in sequence</strong> (no <code>reflect.Type</code> map, no operation
+  instance passed to <code>prepareExec</code>), and the fake is a plain <strong>field</strong> on the fixture
+  rather than an embedded type. The sections below describe that final shape.</p>
+</div>
+
+<h2>Background</h2>
+<p>
+  The two test suites in <code>snapshots/load_test.go</code> and <code>snapshots/save_test.go</code> each
+  drive their subject through a hand-rolled test double that implements
+  <code>storage.Storage</code> (a single <code>Exec(ctx, operation any) error</code> method). Today both doubles
+  use a <strong>type switch</strong> plus a bag of pre-seeded data fields (<code>latest</code>, <code>byID</code>,
+  <code>events</code>, <code>snapshotErr</code>, <code>capturedID</code>, <code>capturedQuery</code>, …). The
+  test's intent is smeared across three places: the struct's pre-seeded fields, the shared switch, and the
+  assertions after the call. The double answers <em>every</em> operation type even when a test exercises one, and
+  adding an operation means editing a switch shared by unrelated tests.
+</p>
+
+<h2>The reference pattern</h2>
+<p>
+  <code>load_taxable_location_test.go</code> demonstrates the target shape. The fixture implements the dependency
+  interface directly and holds a <code>map[reflect.Type]callback</code>; each test calls <code>prepareRead</code>
+  to register the behavior for exactly the operation it cares about:
+</p>
+<pre><code><span class="kw">type</span> GetTaxableLocationShellFixture <span class="kw">struct</span> {
+    *gunit.Fixture
+    reads map[reflect.Type]any
+}
+
+<span class="kw">func</span> (this *…Fixture) Read(ctx context.Context, queries ...any) {
+    <span class="kw">for</span> _, query := <span class="kw">range</span> queries {
+        <span class="kw">if</span> callback, ok := this.reads[reflect.TypeOf(query)]; ok {
+            reflect.ValueOf(callback).Call([]reflect.Value{reflect.ValueOf(query)})
+        }
+    }
+}
+
+<span class="kw">func</span> (this *…Fixture) prepareRead(query any, callback func(any)) {
+    this.reads[reflect.TypeOf(query)] = callback
+}
+
+<span class="cmt">// …in a test:</span>
+this.prepareRead(new(storage.LoadCurrentTaxableLocation), <span class="kw">func</span>(a any) {
+    query := a.(*storage.LoadCurrentTaxableLocation) <span class="cmt">// type-assert the intended op</span>
+    this.So(query.AccountID, should.Equal, uint64(111)) <span class="cmt">// verify inputs</span>
+    query.Result.Address = storage.TaxableLocation{<span class="cmt">…</span>}     <span class="cmt">// set results</span>
+})</code></pre>
+<p>
+  We keep the essence of this pattern — a fixture that registers per-call behavior as a callback that type-asserts
+  the operation, checks inputs, and sets results — with two adaptations. First, <code>storage.Storage.Exec</code>
+  returns an <code>error</code>, so our callback is <code>func(any) error</code> and dictates the returned error.
+  Second, since <code>Load</code>/<code>Save</code> issue their <code>Exec</code> calls in a fixed sequence, we
+  drop the <code>reflect.Type</code> key entirely: callbacks are stored in a slice and consumed in order, so
+  <code>prepareExec</code> needs no operation instance.
+</p>
+
+<h2>Goal</h2>
+<p>
+  Fold the storage double into each gunit fixture as a field. Delete <code>loadStorageStub</code> and
+  <code>saveStorageSpy</code>. Each test appends, in call order, a callback that type-asserts the operation,
+  verifies its input fields, populates its <code>Result</code>, and returns the error the case requires. The fake
+  carries no per-operation knowledge.
+</p>
+
+<h2>The shared fake</h2>
+<p>
+  Both suites live in one package and already share domain fixtures (<code>domainState</code>,
+  <code>marshalJSON</code>, the applicator spies). Define one small helper in the shared region of
+  <code>load_test.go</code> and hold it as a field on each fixture. The field is named <code>db</code> (not
+  <code>storage</code>, which would shadow the imported package); a test passes <code>&amp;this.db</code> wherever a
+  <code>storage.Storage</code> is wanted.
+</p>
+<pre><code><span class="cmt">// fakeStorage is a storage.Storage test double whose Exec calls are answered, in</span>
+<span class="cmt">// registration order, by the callbacks a test adds via prepareExec. Each callback</span>
+<span class="cmt">// type-asserts the operation it expects, checks inputs, fills in its Result, and</span>
+<span class="cmt">// returns the error the case requires.</span>
+<span class="kw">type</span> fakeStorage <span class="kw">struct</span> {
+    callbacks []<span class="kw">func</span>(operation any) error
+    calls     int
+}
+
+<span class="kw">func</span> (this *fakeStorage) Exec(_ context.Context, operation any) error {
+    callback := this.callbacks[this.calls]
+    this.calls++
+    <span class="kw">return</span> callback(operation)
+}
+
+<span class="kw">func</span> (this *fakeStorage) prepareExec(callback <span class="kw">func</span>(operation any) error) {
+    this.callbacks = append(this.callbacks, callback)
+}</code></pre>
+<p class="muted" style="font-size:.9rem">
+  <code>calls</code> serves double duty: it indexes the next callback <em>and</em> counts how many <code>Exec</code>
+  calls happened (used by the skip/no-store assertions below). gunit hands each test a fresh fixture, so the slice
+  and counter reset automatically — no <code>Setup</code> needed. An unexpected extra <code>Exec</code> (more calls
+  than callbacks) indexes past the slice and panics, failing the test loudly.
+</p>
+
+<h3>Fixtures with the fake as a field</h3>
+<pre><code><span class="kw">type</span> LoadFixture <span class="kw">struct</span> {
+    *gunit.Fixture
+    db     fakeStorage <span class="cmt">// pass &this.db as the storage.Storage</span>
+    logged []string    <span class="cmt">// still the logger via Printf</span>
+}
+
+<span class="kw">type</span> SaveFixture <span class="kw">struct</span> {
+    *gunit.Fixture
+    db fakeStorage
+}</code></pre>
+
+<h2>How the ordered slice fits <code>Load</code>'s two calls</h2>
+<p>
+  <code>Save</code> always issues one <code>Exec</code> (a <code>SaveSnapshot</code>). <code>Load</code> issues
+  <strong>one or two</strong>: the snapshot load always, and a <code>LoadEventsSince</code> only when replay is
+  enabled and the domain applies events. Because the sequence is fixed, an ordered slice fits exactly — a two-call
+  test registers the snapshot callback first and the events callback second:
+</p>
+
+<svg viewBox="0 0 820 250" role="img" aria-label="Load Exec call sequence">
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="3.2" orient="auto">
+      <path d="M0,0 L7,3.2 L0,6.4 Z" fill="#5b6472"/>
+    </marker>
+  </defs>
+  <rect x="20" y="40" width="250" height="74" rx="9" fill="#fff" stroke="#2f6f4f" stroke-width="2"/>
+  <text x="145" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1d23">Exec — always</text>
+  <text x="145" y="88" text-anchor="middle" font-size="12" fill="#5b6472">LoadLatestSnapshot</text>
+  <text x="145" y="104" text-anchor="middle" font-size="12" fill="#5b6472">or LoadSnapshot{ID}</text>
+
+  <path d="M270,77 L330,77" stroke="#5b6472" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <polygon points="430,30 530,77 430,124 330,77" fill="#f4f6f8" stroke="#d9dee5" stroke-width="1.5"/>
+  <text x="430" y="68" text-anchor="middle" font-size="11" fill="#1a1d23">registry +</text>
+  <text x="430" y="83" text-anchor="middle" font-size="11" fill="#1a1d23">domain applies</text>
+  <text x="430" y="98" text-anchor="middle" font-size="11" fill="#1a1d23">events?</text>
+
+  <path d="M430,124 L430,180 L300,180" stroke="#5b6472" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <text x="446" y="150" font-size="11" fill="#5b6472">no</text>
+  <rect x="60" y="158" width="240" height="44" rx="9" fill="#e8f3ec" stroke="#2f6f4f" stroke-width="1.5"/>
+  <text x="180" y="185" text-anchor="middle" font-size="12" fill="#2f6f4f">return — 1 Exec total</text>
+
+  <path d="M530,77 L590,77" stroke="#5b6472" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <text x="548" y="68" font-size="11" fill="#5b6472">yes</text>
+  <rect x="590" y="40" width="210" height="74" rx="9" fill="#fff" stroke="#2f6f4f" stroke-width="2"/>
+  <text x="695" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1d23">2nd Exec</text>
+  <text x="695" y="88" text-anchor="middle" font-size="12" fill="#5b6472">LoadEventsSince</text>
+  <text x="695" y="104" text-anchor="middle" font-size="12" fill="#5b6472">{HighWatermark, Types}</text>
+</svg>
+
+<p>
+  The reference has no "this query was skipped" assertion, but three of our load tests do. A skip test registers
+  only the snapshot callback and then asserts <code>this.So(this.db.calls, should.Equal, 1)</code> — proving the
+  events query never ran (had it run, the slice would be exhausted and <code>Exec</code> would panic). The
+  <code>calls</code> counter is the one piece beyond the bare reference pattern.
+</p>
+
+<h2>How the tests read</h2>
+
+<h3>Single call — verify input, set result</h3>
+<div class="grid2">
+  <div class="col">
+    <h4>before</h4>
+<pre><code>db := &loadStorageStub{
+  byID: storage.LoadedSnapshotResult{
+    Found: <span class="kw">true</span>, HighWatermark: 5,
+    Payload: marshalJSON(<span class="cmt">…</span>),
+  },
+}
+<span class="cmt">… Load(Storage(db), SnapshotID(5)) …</span>
+this.So(db.capturedID, should.Equal, uint64(5))</code></pre>
+  </div>
+  <div class="col">
+    <h4>after</h4>
+<pre><code>this.db.prepareExec(<span class="kw">func</span>(a any) error {
+  load := a.(*storage.LoadSnapshot)
+  this.So(load.ID, should.Equal, uint64(5))
+  load.Result = storage.LoadedSnapshotResult{
+    Found: <span class="kw">true</span>, HighWatermark: 5,
+    Payload: marshalJSON(<span class="cmt">…</span>),
+  }
+  <span class="kw">return</span> <span class="kw">nil</span>
+})
+<span class="cmt">… Load(Storage(&this.db), SnapshotID(5)) …</span></code></pre>
+  </div>
+</div>
+<p class="muted" style="font-size:.9rem">
+  <code>Storage(&amp;this.db)</code> — the fixture's field is the double. The <code>capturedID</code> field
+  disappears; its check moves into the callback, right where the operation arrives. The callback's type assertion
+  (<code>a.(*storage.LoadSnapshot)</code>) documents which ordered call it answers.
+</p>
+
+<h3>Two calls — register callbacks in call order</h3>
+<pre><code>this.db.prepareExec(<span class="kw">func</span>(a any) error { <span class="cmt">// 1st Exec: the snapshot load</span>
+    load := a.(*storage.LoadLatestSnapshot)
+    load.Result = storage.LoadedSnapshotResult{
+        Found: <span class="kw">true</span>, HighWatermark: 3, Payload: marshalJSON(domainState{Name: <span class="str">"snap"</span>, Count: 1}),
+    }
+    <span class="kw">return</span> <span class="kw">nil</span>
+})
+this.db.prepareExec(<span class="kw">func</span>(a any) error { <span class="cmt">// 2nd Exec: the events query</span>
+    query := a.(*storage.LoadEventsSince)
+    this.So(query.HighWatermark, should.Equal, uint64(3)) <span class="cmt">// verify input field</span>
+    query.Result.Events = []storage.Event{
+        {Type: <span class="str">"event:alpha"</span>, Payload: marshalJSON(eventAlpha{Order: 11})},
+        {Type: <span class="str">"event:beta"</span>, Payload: marshalJSON(eventBeta{Order: 22})},
+    }
+    query.Result.NewHighWatermark = 7
+    <span class="kw">return</span> <span class="kw">nil</span>
+})</code></pre>
+
+<h3>Error case &amp; "never called"</h3>
+<pre><code><span class="cmt">// storage error: the callback just returns it</span>
+this.db.prepareExec(<span class="kw">func</span>(any) error { <span class="kw">return</span> boom })
+
+<span class="cmt">// events query must be skipped: register only the snapshot callback, then…</span>
+this.So(this.db.calls, should.Equal, 1)</code></pre>
+
+<h2>Per-test mapping</h2>
+<p>No test changes <em>what</em> it asserts — only how it stages the double. The <code>Domain</code> spies
+  (<code>applicatorSpy</code>, <code>bareApplicator</code>, <code>gammaApplicator</code>) are unchanged; only the
+  storage double folds into the fixture.</p>
+<table>
+  <tr><th>Test</th><th>Callbacks (in order)</th><th>Notes</th></tr>
+  <tr><td colspan="3" style="background:#eef1f4;font-weight:600">load_test.go</td></tr>
+  <tr><td><code>TestNop</code></td><td>—</td><td>No storage; unchanged.</td></tr>
+  <tr><td><code>TestLatestPlainJSONLoadedAndAppliedToDomain</code></td><td><code>LoadLatestSnapshot</code></td><td>—</td></tr>
+  <tr><td><code>TestLatestGzipPayloadDecompressed</code></td><td><code>LoadLatestSnapshot</code></td><td>—</td></tr>
+  <tr><td><code>TestCorruptGzipReturnsError</code></td><td><code>LoadLatestSnapshot</code></td><td>error raised after Exec returns</td></tr>
+  <tr><td><code>TestInvalidJSONReturnsError</code></td><td><code>LoadLatestSnapshot</code></td><td>error raised after Exec returns</td></tr>
+  <tr><td><code>TestSnapshotNotFoundReturnsMissingError</code></td><td><code>LoadLatestSnapshot</code></td><td><code>Result.Found = false</code></td></tr>
+  <tr><td><code>TestSnapshotStorageErrorPropagates</code></td><td><code>LoadLatestSnapshot</code></td><td>callback returns <code>boom</code></td></tr>
+  <tr><td><code>TestSpecificSnapshotStorageErrorPropagates</code></td><td><code>LoadSnapshot</code></td><td>callback returns <code>boom</code></td></tr>
+  <tr><td><code>TestSpecificSnapshotLoadedByID</code></td><td><code>LoadSnapshot</code></td><td>assert <code>ID == 5</code> in callback</td></tr>
+  <tr><td><code>TestEventsSinceWatermarkAppliedAfterSnapshot</code></td><td><code>LoadLatestSnapshot</code> + <code>LoadEventsSince</code></td><td>assert <code>HighWatermark == 3</code></td></tr>
+  <tr><td><code>TestNoRegistrySkipsEventQuery</code></td><td><code>LoadLatestSnapshot</code></td><td><code>db.calls == 1</code></td></tr>
+  <tr><td><code>TestRegistryButDomainAppliesNoEventsSkipsQuery</code></td><td><code>LoadLatestSnapshot</code></td><td><code>db.calls == 1</code></td></tr>
+  <tr><td><code>TestDomainAppliesUnregisteredEventTypeReturnsError</code></td><td><code>LoadLatestSnapshot</code></td><td>errors before events call; <code>db.calls == 1</code></td></tr>
+  <tr><td><code>TestUnsupportedEventTypeReturnsError</code></td><td><code>LoadLatestSnapshot</code> + <code>LoadEventsSince</code></td><td>events callback returns an event of unknown type</td></tr>
+  <tr><td><code>TestCorruptEventPayloadReturnsError</code></td><td><code>LoadLatestSnapshot</code> + <code>LoadEventsSince</code></td><td>events callback returns malformed payload</td></tr>
+  <tr><td><code>TestEventsStorageErrorPropagates</code></td><td><code>LoadLatestSnapshot</code> + <code>LoadEventsSince</code></td><td>events callback returns <code>boom</code></td></tr>
+  <tr><td colspan="3" style="background:#eef1f4;font-weight:600">save_test.go</td></tr>
+  <tr><td><code>TestSnapshotMarshaledCompressedAndPersisted</code></td><td><code>SaveSnapshot</code></td><td>gzip round-trip assertions move into callback</td></tr>
+  <tr><td><code>TestTimestampDefaultsToUTCNow</code></td><td><code>SaveSnapshot</code></td><td>assert UTC / non-zero in callback</td></tr>
+  <tr><td><code>TestStorageErrorPropagates</code></td><td><code>SaveSnapshot</code></td><td>callback returns <code>boom</code></td></tr>
+  <tr><td><code>TestUnmarshalableSnapshotReturnsErrorWithoutStoring</code></td><td>—</td><td>marshal fails first; assert <code>db.calls == 0</code></td></tr>
+</table>
+
+<h2>Trade-offs &amp; notes</h2>
+<table>
+  <tr><th>Consideration</th><th>Assessment</th></tr>
+  <tr>
+    <td>Per-test callbacks are more verbose than pre-seeding struct fields.</td>
+    <td>Accepted, and the point: each test tells its whole story in one place, with no shared switch to reason around. Matches the established <code>sales-context</code> convention.</td>
+  </tr>
+  <tr>
+    <td>The fake is a field (<code>db</code>) the fixture passes as <code>&amp;this.db</code>, rather than an embedded type.</td>
+    <td>The fixture is already the logger (via <code>Printf</code>); a field keeps the storage role explicit at the call site (<code>Storage(&amp;this.db)</code>) instead of hiding it behind method promotion.</td>
+  </tr>
+  <tr>
+    <td>Callbacks run in <strong>registration order</strong>, so a test's registrations must match <code>Load</code>'s call sequence (snapshot, then events).</td>
+    <td>Accepted. The sequence is fixed and short, so order is easy to get right; in exchange the fake drops the <code>reflect.Type</code> map and <code>prepareExec</code> needs no operation instance. The callback's <code>a.(*storage.X)</code> assertion still names the operation it expects.</td>
+  </tr>
+  <tr>
+    <td>Terse type assertion <code>op := a.(*storage.X)</code> panics on a mismatch.</td>
+    <td>Adopted from the reference (no comma-ok). A wrong-type panic is an immediate, located test failure — a coding error in the test itself.</td>
+  </tr>
+  <tr>
+    <td>An unexpected extra <code>Exec</code> (more calls than callbacks) panics with a raw index-out-of-range.</td>
+    <td>Accepted for simplicity — it still fails the test loudly and points at <code>Exec</code>. A guard with a friendlier message could be added if it ever proves confusing.</td>
+  </tr>
+</table>
+
+<h2>Implementation checklist</h2>
+
+<div class="phase">
+  <h3><span class="n">1</span> Introduce the embeddable fake (red → green)</h3>
+  <ul class="check">
+    <li>✅ Add the <code>fakeStorage</code> helper (<code>Exec</code>, <code>prepareExec</code>, <code>executed</code> recording) to the shared-fixtures region of <code>load_test.go</code>.</li>
+    <li>✅ Embed <code>fakeStorage</code> in <code>LoadFixture</code> and <code>SaveFixture</code>.</li>
+    <li>✅ Convert one simple test (e.g. <code>TestLatestPlainJSONLoadedAndAppliedToDomain</code>) to <code>prepareExec</code> + <code>Storage(this)</code>; leave the rest on <code>loadStorageStub</code> so the file still compiles.</li>
+    <li>✅ Run <code>go test -run '^TestLoadFixture$/^TestLatestPlainJSON' ./snapshots</code> — confirm green.</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h3><span class="n">2</span> Migrate the single-call load tests</h3>
+  <ul class="check">
+    <li>✅ Convert each one-call load test; move <code>capturedID</code>/field checks into the callback.</li>
+    <li>✅ For the skip-events tests, replace the <code>capturedQuery == nil</code> assertion with <code>this.So(len(this.executed), should.Equal, 1)</code>.</li>
+    <li>✅ Run <code>go test -run '^TestLoadFixture$' ./snapshots</code> after each few conversions.</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h3><span class="n">3</span> Migrate the two-call load tests</h3>
+  <ul class="check">
+    <li>✅ Convert <code>TestUnsupportedEventTypeReturnsError</code>, <code>TestCorruptEventPayloadReturnsError</code>, and <code>TestEventsStorageErrorPropagates</code> to register two callbacks each. <em>(Also converted <code>TestEventsSinceWatermarkAppliedAfterSnapshot</code> — a two-call test the checklist omitted.)</em></li>
+    <li>✅ The <code>LoadEventsSince</code> callback asserts <code>HighWatermark</code> (and, where meaningful, <code>Types</code>) before setting results or returning the error.</li>
+    <li>✅ Run the full <code>TestLoadFixture</code> suite.</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h3><span class="n">4</span> Migrate <code>save_test.go</code> and retire the old doubles</h3>
+  <ul class="check">
+    <li>✅ Convert all four save tests to <code>prepareExec</code> + <code>Storage(this)</code>; move payload/timestamp assertions into the callback. For <code>TestUnmarshalableSnapshot…</code>, register nothing and assert <code>len(this.executed) == 0</code>.</li>
+    <li>✅ Delete <code>loadStorageStub</code> and <code>saveStorageSpy</code>.</li>
+    <li>✅ Run <code>make test</code> (full short suite, twice incl. <code>-race</code>); confirm <code>snapshots</code> coverage holds (≈99%).</li>
+    <li>✅ <code>grep</code> to confirm nothing references the removed types.</li>
+  </ul>
+</div>
+
+<div class="callout">
+  <p><strong>Post-implementation refinement.</strong> The checklist above records the path actually taken, which
+  built the fake type-keyed and embedded first. A follow-up pass then simplified it to the final shape described
+  at the top of this document: the <code>reflect.Type</code> map became an ordered <code>callbacks</code> slice
+  with a <code>calls</code> counter (so <code>prepareExec</code> no longer takes an operation instance, and
+  <code>len(this.executed)</code> assertions became <code>this.db.calls</code>), and the embedded
+  <code>fakeStorage</code> became a <code>db</code> field passed as <code>&amp;this.db</code>. <code>make test</code>
+  remained green throughout; <code>snapshots</code> coverage held at 99.0%.</p>
+</div>
+
+<h2>Out of scope</h2>
+<p>
+  No production code changes. <code>storage.Storage</code>, <code>Load</code>, and <code>Save</code> are untouched.
+  The <code>storage/mysql</code> tests and their <code>Mapper</code> doubles are a separate concern and are not
+  modified here.
+</p>

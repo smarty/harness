@@ -1,7 +1,6 @@
 package snapshots
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -18,76 +17,61 @@ func TestSaveFixture(t *testing.T) {
 
 type SaveFixture struct {
 	*gunit.Fixture
-}
-
-// saveStorageSpy records the SaveSnapshot operation it was asked to execute.
-type saveStorageSpy struct {
-	captured *storage.SaveSnapshot
-	called   bool
-	err      error
-}
-
-func (this *saveStorageSpy) Exec(_ context.Context, operation any) error {
-	this.called = true
-	if this.err != nil {
-		return this.err
-	}
-	switch op := operation.(type) {
-	case *storage.SaveSnapshot:
-		this.captured = op
-		return nil
-	default:
-		return storage.ErrUnsupportedOperation
-	}
+	db fakeStorage
 }
 
 func (this *SaveFixture) TestSnapshotMarshaledCompressedAndPersisted() {
-	db := &saveStorageSpy{}
 	timestamp := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
 	original := domainState{Name: "persist-me", Count: 13}
+	this.db.prepareExec(func(a any) error {
+		save := a.(*storage.SaveSnapshot)
+		this.So(save.Timestamp, should.Equal, timestamp)
+		this.So(save.HighWatermark, should.Equal, uint64(77))
+		this.So(save.ContentType, should.Equal, "application/json")
+		this.So(save.ContentEncoding, should.Equal, "gzip")
+		// The payload must be gzip-compressed JSON that round-trips to the original:
+		decompressed, err := gunzip(save.Payload)
+		this.So(err, should.BeNil)
+		var roundTrip domainState
+		this.So(json.Unmarshal(decompressed, &roundTrip), should.BeNil)
+		this.So(roundTrip, should.Equal, original)
+		return nil
+	})
 
 	err := Save(this.Context(),
-		SaveOptions.Storage(db),
+		SaveOptions.Storage(&this.db),
 		SaveOptions.Timestamp(timestamp),
 		SaveOptions.HighWatermark(77),
 		SaveOptions.Snapshot(original),
 	)
 
 	this.So(err, should.BeNil)
-	this.So(db.captured, should.NOT.BeNil)
-	this.So(db.captured.Timestamp, should.Equal, timestamp)
-	this.So(db.captured.HighWatermark, should.Equal, uint64(77))
-	this.So(db.captured.ContentType, should.Equal, "application/json")
-	this.So(db.captured.ContentEncoding, should.Equal, "gzip")
-
-	// The payload must be gzip-compressed JSON that round-trips to the original:
-	decompressed, err := gunzip(db.captured.Payload)
-	this.So(err, should.BeNil)
-	var roundTrip domainState
-	this.So(json.Unmarshal(decompressed, &roundTrip), should.BeNil)
-	this.So(roundTrip, should.Equal, original)
+	this.So(this.db.calls, should.Equal, 1)
 }
 
 func (this *SaveFixture) TestTimestampDefaultsToUTCNow() {
-	db := &saveStorageSpy{}
+	this.db.prepareExec(func(a any) error {
+		save := a.(*storage.SaveSnapshot)
+		this.So(save.Timestamp.IsZero(), should.BeFalse)
+		this.So(save.Timestamp.Location(), should.Equal, time.UTC)
+		return nil
+	})
 
 	err := Save(this.Context(),
-		SaveOptions.Storage(db),
+		SaveOptions.Storage(&this.db),
 		SaveOptions.HighWatermark(1),
 		SaveOptions.Snapshot(domainState{Name: "x"}),
 	)
 
 	this.So(err, should.BeNil)
-	this.So(db.captured.Timestamp.IsZero(), should.BeFalse)
-	this.So(db.captured.Timestamp.Location(), should.Equal, time.UTC)
 }
 
 func (this *SaveFixture) TestStorageErrorPropagates() {
 	boom := fmt.Errorf("write failed")
-	db := &saveStorageSpy{err: boom}
+	this.db.prepareExec(func(any) error { return boom })
 
 	err := Save(this.Context(),
-		SaveOptions.Storage(db),
+		SaveOptions.Storage(&this.db),
 		SaveOptions.Snapshot(domainState{Name: "x"}),
 	)
 
@@ -95,13 +79,11 @@ func (this *SaveFixture) TestStorageErrorPropagates() {
 }
 
 func (this *SaveFixture) TestUnmarshalableSnapshotReturnsErrorWithoutStoring() {
-	db := &saveStorageSpy{}
-
 	err := Save(this.Context(),
-		SaveOptions.Storage(db),
+		SaveOptions.Storage(&this.db),
 		SaveOptions.Snapshot(make(chan int)), // channels cannot be JSON-encoded
 	)
 
 	this.So(err, should.NOT.BeNil)
-	this.So(db.called, should.BeFalse)
+	this.So(this.db.calls, should.Equal, 0)
 }

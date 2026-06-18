@@ -20,6 +20,7 @@ func TestLoadFixture(t *testing.T) {
 
 type LoadFixture struct {
 	*gunit.Fixture
+	db     fakeStorage
 	logged []string
 }
 
@@ -62,47 +63,23 @@ func gzipPayload(data []byte) []byte {
 	return buffer.Bytes()
 }
 
-// loadStorageStub answers the snapshot/event operations from in-memory fixtures
-// and records the operations it received for assertions.
-type loadStorageStub struct {
-	latest           storage.LoadedSnapshotResult
-	byID             storage.LoadedSnapshotResult
-	events           []storage.Event
-	newHighWatermark uint64
-
-	snapshotErr error
-	eventsErr   error
-
-	capturedID    uint64
-	capturedQuery *storage.LoadEventsSince
+// fakeStorage is a storage.Storage test double whose Exec calls are answered, in
+// registration order, by the callbacks a test adds via prepareExec. Each callback
+// type-asserts the operation it expects, checks inputs, fills in its Result, and
+// returns the error the case requires.
+type fakeStorage struct {
+	callbacks []func(operation any) error
+	calls     int
 }
 
-func (this *loadStorageStub) Exec(_ context.Context, operation any) error {
-	switch op := operation.(type) {
-	case *storage.LoadLatestSnapshot:
-		if this.snapshotErr != nil {
-			return this.snapshotErr
-		}
-		op.Result = this.latest
-		return nil
-	case *storage.LoadSnapshot:
-		if this.snapshotErr != nil {
-			return this.snapshotErr
-		}
-		this.capturedID = op.ID
-		op.Result = this.byID
-		return nil
-	case *storage.LoadEventsSince:
-		if this.eventsErr != nil {
-			return this.eventsErr
-		}
-		this.capturedQuery = op
-		op.Result.Events = this.events
-		op.Result.NewHighWatermark = this.newHighWatermark
-		return nil
-	default:
-		return storage.ErrUnsupportedOperation
-	}
+func (this *fakeStorage) Exec(_ context.Context, operation any) error {
+	callback := this.callbacks[this.calls]
+	this.calls++
+	return callback(operation)
+}
+
+func (this *fakeStorage) prepareExec(callback func(operation any) error) {
+	this.callbacks = append(this.callbacks, callback)
 }
 
 // applicatorSpy records every applied message through the generic Apply, while
@@ -140,17 +117,21 @@ func (this *LoadFixture) TestNop() {
 }
 
 func (this *LoadFixture) TestLatestPlainJSONLoadedAndAppliedToDomain() {
-	db := &loadStorageStub{latest: storage.LoadedSnapshotResult{
-		Found:         true,
-		HighWatermark: 42,
-		Payload:       marshalJSON(domainState{Name: "alpha", Count: 7}),
-	}}
+	this.db.prepareExec(func(a any) error {
+		load := a.(*storage.LoadLatestSnapshot)
+		load.Result = storage.LoadedSnapshotResult{
+			Found:         true,
+			HighWatermark: 42,
+			Payload:       marshalJSON(domainState{Name: "alpha", Count: 7}),
+		}
+		return nil
+	})
 	spy := &applicatorSpy{}
 	state := &domainState{}
 
 	result, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(state),
 	)
@@ -168,18 +149,21 @@ func (this *LoadFixture) TestLatestPlainJSONLoadedAndAppliedToDomain() {
 
 func (this *LoadFixture) TestLatestGzipPayloadDecompressed() {
 	raw := marshalJSON(domainState{Name: "beta", Count: 9})
-	db := &loadStorageStub{latest: storage.LoadedSnapshotResult{
-		Found:           true,
-		HighWatermark:   99,
-		ContentEncoding: "gzip",
-		Payload:         gzipPayload(raw),
-	}}
+	this.db.prepareExec(func(a any) error {
+		a.(*storage.LoadLatestSnapshot).Result = storage.LoadedSnapshotResult{
+			Found:           true,
+			HighWatermark:   99,
+			ContentEncoding: "gzip",
+			Payload:         gzipPayload(raw),
+		}
+		return nil
+	})
 	spy := &applicatorSpy{}
 	state := &domainState{}
 
 	result, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(state),
 	)
@@ -190,16 +174,19 @@ func (this *LoadFixture) TestLatestGzipPayloadDecompressed() {
 }
 
 func (this *LoadFixture) TestCorruptGzipReturnsError() {
-	db := &loadStorageStub{latest: storage.LoadedSnapshotResult{
-		Found:           true,
-		ContentEncoding: "gzip",
-		Payload:         []byte("this is not gzip"),
-	}}
+	this.db.prepareExec(func(a any) error {
+		a.(*storage.LoadLatestSnapshot).Result = storage.LoadedSnapshotResult{
+			Found:           true,
+			ContentEncoding: "gzip",
+			Payload:         []byte("this is not gzip"),
+		}
+		return nil
+	})
 	spy := &applicatorSpy{}
 
 	_, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(&domainState{}),
 	)
@@ -209,15 +196,18 @@ func (this *LoadFixture) TestCorruptGzipReturnsError() {
 }
 
 func (this *LoadFixture) TestInvalidJSONReturnsError() {
-	db := &loadStorageStub{latest: storage.LoadedSnapshotResult{
-		Found:   true,
-		Payload: []byte("{not valid json"),
-	}}
+	this.db.prepareExec(func(a any) error {
+		a.(*storage.LoadLatestSnapshot).Result = storage.LoadedSnapshotResult{
+			Found:   true,
+			Payload: []byte("{not valid json"),
+		}
+		return nil
+	})
 	spy := &applicatorSpy{}
 
 	_, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(&domainState{}),
 	)
@@ -227,12 +217,15 @@ func (this *LoadFixture) TestInvalidJSONReturnsError() {
 }
 
 func (this *LoadFixture) TestSnapshotNotFoundReturnsMissingError() {
-	db := &loadStorageStub{latest: storage.LoadedSnapshotResult{Found: false}}
+	this.db.prepareExec(func(a any) error {
+		a.(*storage.LoadLatestSnapshot).Result = storage.LoadedSnapshotResult{Found: false}
+		return nil
+	})
 	spy := &applicatorSpy{}
 
 	result, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(&domainState{}),
 	)
@@ -244,12 +237,12 @@ func (this *LoadFixture) TestSnapshotNotFoundReturnsMissingError() {
 
 func (this *LoadFixture) TestSnapshotStorageErrorPropagates() {
 	boom := fmt.Errorf("database unavailable")
-	db := &loadStorageStub{snapshotErr: boom}
+	this.db.prepareExec(func(any) error { return boom })
 	spy := &applicatorSpy{}
 
 	_, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(&domainState{}),
 	)
@@ -260,12 +253,12 @@ func (this *LoadFixture) TestSnapshotStorageErrorPropagates() {
 
 func (this *LoadFixture) TestSpecificSnapshotStorageErrorPropagates() {
 	boom := fmt.Errorf("database unavailable")
-	db := &loadStorageStub{snapshotErr: boom}
+	this.db.prepareExec(func(any) error { return boom })
 	spy := &applicatorSpy{}
 
 	_, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.SnapshotID(5),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(&domainState{}),
@@ -276,47 +269,58 @@ func (this *LoadFixture) TestSpecificSnapshotStorageErrorPropagates() {
 }
 
 func (this *LoadFixture) TestSpecificSnapshotLoadedByID() {
-	db := &loadStorageStub{byID: storage.LoadedSnapshotResult{
-		Found:         true,
-		HighWatermark: 5,
-		Payload:       marshalJSON(domainState{Name: "specific", Count: 3}),
-	}}
+	this.db.prepareExec(func(a any) error {
+		load := a.(*storage.LoadSnapshot)
+		this.So(load.ID, should.Equal, uint64(5))
+		load.Result = storage.LoadedSnapshotResult{
+			Found:         true,
+			HighWatermark: 5,
+			Payload:       marshalJSON(domainState{Name: "specific", Count: 3}),
+		}
+		return nil
+	})
 	spy := &applicatorSpy{}
 	state := &domainState{}
 
 	result, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.SnapshotID(5),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(state),
 	)
 
 	this.So(err, should.BeNil)
-	this.So(db.capturedID, should.Equal, uint64(5))
 	this.So(result.PreviousHighWatermark, should.Equal, uint64(5))
 	this.So(*state, should.Equal, domainState{Name: "specific", Count: 3})
 }
 
 func (this *LoadFixture) TestEventsSinceWatermarkAppliedAfterSnapshot() {
-	db := &loadStorageStub{
-		latest: storage.LoadedSnapshotResult{
+	this.db.prepareExec(func(a any) error {
+		a.(*storage.LoadLatestSnapshot).Result = storage.LoadedSnapshotResult{
 			Found:         true,
 			HighWatermark: 3,
 			Payload:       marshalJSON(domainState{Name: "snap", Count: 1}),
-		},
-		events: []storage.Event{
+		}
+		return nil
+	})
+	this.db.prepareExec(func(a any) error {
+		query := a.(*storage.LoadEventsSince)
+		// The event query reads from the loaded snapshot's high watermark:
+		this.So(query.HighWatermark, should.Equal, uint64(3))
+		query.Result.Events = []storage.Event{
 			{Type: "event:alpha", Payload: marshalJSON(eventAlpha{Order: 11})},
 			{Type: "event:beta", Payload: marshalJSON(eventBeta{Order: 22})},
-		},
-		newHighWatermark: 7,
-	}
+		}
+		query.Result.NewHighWatermark = 7
+		return nil
+	})
 	spy := &applicatorSpy{}
 	state := &domainState{}
 
 	result, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(state),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
@@ -331,95 +335,106 @@ func (this *LoadFixture) TestEventsSinceWatermarkAppliedAfterSnapshot() {
 		eventAlpha{Order: 11},
 		eventBeta{Order: 22},
 	})
-	// The event query reads from the loaded snapshot's high watermark:
-	this.So(db.capturedQuery.HighWatermark, should.Equal, uint64(3))
 }
 
 func (this *LoadFixture) TestNoRegistrySkipsEventQuery() {
-	db := &loadStorageStub{latest: storage.LoadedSnapshotResult{
-		Found:         true,
-		HighWatermark: 4,
-		Payload:       marshalJSON(domainState{Name: "only-snapshot", Count: 0}),
-	}}
+	this.db.prepareExec(func(a any) error {
+		a.(*storage.LoadLatestSnapshot).Result = storage.LoadedSnapshotResult{
+			Found:         true,
+			HighWatermark: 4,
+			Payload:       marshalJSON(domainState{Name: "only-snapshot", Count: 0}),
+		}
+		return nil
+	})
 	spy := &applicatorSpy{}
 
 	// No RegisteredEvents provided → replay is not enabled.
 	result, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(&domainState{}),
 	)
 
 	this.So(err, should.BeNil)
-	this.So(db.capturedQuery, should.BeNil)
+	this.So(this.db.calls, should.Equal, 1) // the events query was skipped
 	this.So(result.EventsAppliedCount, should.Equal, uint64(0))
 	this.So(result.NewHighWatermark, should.Equal, uint64(4)) // no replay: equals the snapshot watermark
 	this.So(spy.applied, should.Equal, []any{domainState{Name: "only-snapshot", Count: 0}})
 }
 
 func (this *LoadFixture) TestRegistryButDomainAppliesNoEventsSkipsQuery() {
-	db := &loadStorageStub{latest: storage.LoadedSnapshotResult{
-		Found:         true,
-		HighWatermark: 4,
-		Payload:       marshalJSON(domainState{Name: "snapshot-only", Count: 0}),
-	}}
+	this.db.prepareExec(func(a any) error {
+		a.(*storage.LoadLatestSnapshot).Result = storage.LoadedSnapshotResult{
+			Found:         true,
+			HighWatermark: 4,
+			Payload:       marshalJSON(domainState{Name: "snapshot-only", Count: 0}),
+		}
+		return nil
+	})
 	domain := &bareApplicator{}
 
 	// Registry provided, but the Domain declares no typed Apply<Foo> methods.
 	result, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(domain),
 		LoadOptions.LoadedSnapshot(&domainState{}),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
 	)
 
 	this.So(err, should.BeNil)
-	this.So(db.capturedQuery, should.BeNil)
+	this.So(this.db.calls, should.Equal, 1) // the events query was skipped
 	this.So(result.EventsAppliedCount, should.Equal, uint64(0))
 	this.So(result.NewHighWatermark, should.Equal, uint64(4)) // no replay: equals the snapshot watermark
 	this.So(domain.applied, should.Equal, []any{domainState{Name: "snapshot-only", Count: 0}})
 }
 
 func (this *LoadFixture) TestDomainAppliesUnregisteredEventTypeReturnsError() {
-	db := &loadStorageStub{latest: storage.LoadedSnapshotResult{
-		Found:   true,
-		Payload: marshalJSON(domainState{Name: "snap", Count: 1}),
-	}}
+	this.db.prepareExec(func(a any) error {
+		a.(*storage.LoadLatestSnapshot).Result = storage.LoadedSnapshotResult{
+			Found:   true,
+			Payload: marshalJSON(domainState{Name: "snap", Count: 1}),
+		}
+		return nil
+	})
 	domain := &gammaApplicator{}
 
 	// The Domain applies eventGamma, which is absent from the registry.
 	result, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(domain),
 		LoadOptions.LoadedSnapshot(&domainState{}),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
 	)
 
 	this.So(err, should.WrapError, errUnregisteredEventType)
-	this.So(db.capturedQuery, should.BeNil) // errored before querying storage
+	this.So(this.db.calls, should.Equal, 1) // errored before querying storage
 	this.So(result.EventsAppliedCount, should.Equal, uint64(0))
 	// The snapshot is applied before events are resolved:
 	this.So(domain.applied, should.Equal, []any{domainState{Name: "snap", Count: 1}})
 }
 
 func (this *LoadFixture) TestUnsupportedEventTypeReturnsError() {
-	db := &loadStorageStub{
-		latest: storage.LoadedSnapshotResult{
+	this.db.prepareExec(func(a any) error {
+		a.(*storage.LoadLatestSnapshot).Result = storage.LoadedSnapshotResult{
 			Found:   true,
 			Payload: marshalJSON(domainState{Name: "snap", Count: 1}),
-		},
-		events: []storage.Event{
+		}
+		return nil
+	})
+	this.db.prepareExec(func(a any) error {
+		a.(*storage.LoadEventsSince).Result.Events = []storage.Event{
 			{Type: "event:unknown", Payload: marshalJSON(eventAlpha{Order: 1})},
-		},
-	}
+		}
+		return nil
+	})
 	spy := &applicatorSpy{}
 
 	_, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(&domainState{}),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
@@ -431,20 +446,24 @@ func (this *LoadFixture) TestUnsupportedEventTypeReturnsError() {
 }
 
 func (this *LoadFixture) TestCorruptEventPayloadReturnsError() {
-	db := &loadStorageStub{
-		latest: storage.LoadedSnapshotResult{
+	this.db.prepareExec(func(a any) error {
+		a.(*storage.LoadLatestSnapshot).Result = storage.LoadedSnapshotResult{
 			Found:   true,
 			Payload: marshalJSON(domainState{Name: "snap", Count: 1}),
-		},
-		events: []storage.Event{
+		}
+		return nil
+	})
+	this.db.prepareExec(func(a any) error {
+		a.(*storage.LoadEventsSince).Result.Events = []storage.Event{
 			{Type: "event:alpha", Payload: []byte("{not valid json")},
-		},
-	}
+		}
+		return nil
+	})
 	spy := &applicatorSpy{}
 
 	_, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(&domainState{}),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
@@ -455,18 +474,19 @@ func (this *LoadFixture) TestCorruptEventPayloadReturnsError() {
 
 func (this *LoadFixture) TestEventsStorageErrorPropagates() {
 	boom := fmt.Errorf("events query failed")
-	db := &loadStorageStub{
-		latest: storage.LoadedSnapshotResult{
+	this.db.prepareExec(func(a any) error {
+		a.(*storage.LoadLatestSnapshot).Result = storage.LoadedSnapshotResult{
 			Found:   true,
 			Payload: marshalJSON(domainState{Name: "snap", Count: 1}),
-		},
-		eventsErr: boom,
-	}
+		}
+		return nil
+	})
+	this.db.prepareExec(func(any) error { return boom })
 	spy := &applicatorSpy{}
 
 	_, err := Load(this.Context(),
 		LoadOptions.Logger(this),
-		LoadOptions.Storage(db),
+		LoadOptions.Storage(&this.db),
 		LoadOptions.Domain(spy),
 		LoadOptions.LoadedSnapshot(&domainState{}),
 		LoadOptions.RegisteredEvents(registeredTypesByName(), registeredNamesByType()),
