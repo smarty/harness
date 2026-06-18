@@ -175,6 +175,7 @@ func load(ctx context.Context, config loadConfig) (result LoadResult, err error)
 		if err := json.Unmarshal(event.Payload, pointer.Interface()); err != nil {
 			return result, fmt.Errorf("unmarshal event %q: %w", event.Type, err)
 		}
+		result.EventsAppliedCount++
 		config.Domain.Apply(pointer.Elem().Interface())
 	}
 	result.NewHighWatermark = loadEvents.Result.NewHighWatermark
