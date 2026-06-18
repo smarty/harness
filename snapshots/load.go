@@ -27,7 +27,7 @@ import (
 // From there callers may decide to:
 //  1. Export a subsequent (updated) snapshot for custom queries/reports,
 //  2. Export a subsequent (updated) snapshot to be persisted to storage,
-//     most likely via this Save, and/or
+//     most likely via Save, and/or
 //  3. Provide the applied domain to make business decisions, perhaps using
 //     the pipeline provided by github.com/smarty/harness/v2
 func Load[Snapshot any](ctx context.Context, options ...loadOption) (LoadResult[Snapshot], error) {
