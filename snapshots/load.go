@@ -169,13 +169,13 @@ func load(ctx context.Context, config loadConfig) (result LoadResult, err error)
 	if len(applied) == 0 {
 		return result, nil // registry provided, but the Domain applies no events
 	}
-	var typeNames []string
+	typeNames := make(map[string]struct{}, len(applied))
 	for _, eventType := range applied {
 		name, found := config.EventRegistry.NamesByType[eventType]
 		if !found {
 			return result, fmt.Errorf("%w: %s", errUnregisteredEventType, eventType)
 		}
-		typeNames = append(typeNames, name)
+		typeNames[name] = struct{}{}
 	}
 	// Load and apply events since high watermark:
 	loadEvents := &storage.LoadEventsSince{

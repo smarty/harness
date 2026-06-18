@@ -82,7 +82,7 @@ type (
 	// type matches one of Types (canonical stored type names).
 	LoadEventsSince struct {
 		HighWatermark uint64
-		Types         []string // canonical stored type names to query for
+		Types         map[string]struct{} // set of canonical stored type names to query for
 		Result        struct {
 			NewHighWatermark uint64
 			Events           []Event

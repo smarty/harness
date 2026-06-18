@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 
@@ -323,15 +324,12 @@ func (this *Mapper) loadEventsSince(ctx context.Context, op *storage.LoadEventsS
 		 WHERE type IN (`, table),
 	)
 
-	for e, name := range op.Types {
-		if slices.Contains(statement.args, any(name)) {
-			continue
+	for _, name := range slices.Sorted(maps.Keys(op.Types)) {
+		if len(statement.args) > 0 {
+			statement.text.WriteString(`,`)
 		}
 		statement.args = append(statement.args, name)
 		statement.text.WriteString(`?`)
-		if e < len(op.Types)-1 {
-			statement.text.WriteString(`,`)
-		}
 	}
 	if len(statement.args) == 0 {
 		return errors.New("no valid event types provided")
