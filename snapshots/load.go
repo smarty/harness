@@ -1,9 +1,12 @@
 package snapshots
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"reflect"
@@ -177,4 +180,13 @@ func load(ctx context.Context, config loadConfig) (result LoadResult, err error)
 	result.NewHighWatermark = loadEvents.Result.NewHighWatermark
 
 	return result, nil
+}
+
+func gunzip(compressed []byte) (result []byte, err error) {
+	reader, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = reader.Close() }()
+	return io.ReadAll(reader)
 }

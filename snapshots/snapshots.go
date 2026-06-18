@@ -5,30 +5,14 @@
 package snapshots
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"reflect"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/storage"
 )
-
-// logger receives informational progress messages during initialization.
-// A *log.Logger satisfies it.
-type logger interface {
-	Printf(format string, args ...any)
-}
-
-// applicator is the domain being rebuilt: InitializeDomain calls Apply once with
-// the decoded snapshot, then once per replayed event in ascending id order.
-type applicator interface {
-	Apply(message any)
-}
 
 // DomainInitializationReport summarizes the outcome of InitializeDomain.
 type DomainInitializationReport struct {
@@ -141,17 +125,3 @@ func decodeEvents(events []storage.Event, messageTypes map[string]reflect.Type) 
 	}
 	return decoded, nil
 }
-
-func gunzip(compressed []byte) (result []byte, err error) {
-	reader, err := gzip.NewReader(bytes.NewReader(compressed))
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = reader.Close() }()
-	return io.ReadAll(reader)
-}
-
-var (
-	errMissingSnapshot        = errors.New("snapshots: no snapshot found")
-	errUnsupportedMessageType = errors.New("snapshots: unsupported message type")
-)
