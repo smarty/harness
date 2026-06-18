@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Adversarial Pre-Release Review (Delta) — smarty/harness v2</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f8fa; --panel2: #eef1f4; --text: #1f2328;
+    --muted: #59636e; --accent: #0969da; --border: #d1d9e0;
+    --crit: #c62828; --high: #e65100; --med: #b8860b; --low: #2e7d32; --info: #607d8b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.6 -apple-system, "Segoe UI", Helvetica, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 32px 40px 16px; border-bottom: 1px solid var(--border); }
+  h1 { margin: 0 0 4px; font-size: 26px; }
+  h1 small { color: var(--muted); font-weight: normal; font-size: 15px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 40px 80px; }
+  h2 { margin-top: 40px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
+  code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
+  pre { background: #f6f8fa; border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; line-height: 1.45; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; }
+  th { background: var(--panel2); }
+  .filters { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 12px 0; display: flex; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+  .filters button { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 16px; padding: 4px 14px; cursor: pointer; font-size: 13px; }
+  .filters button.active { border-color: var(--accent); color: var(--accent); }
+  details.finding { background: var(--panel); border: 1px solid var(--border); border-left-width: 5px; border-radius: 8px; margin: 14px 0; }
+  details.finding > summary { cursor: pointer; padding: 12px 16px; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 10px; }
+  details.finding > summary::-webkit-details-marker { display: none; }
+  details.finding > summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
+  details.finding[open] > summary::before { transform: rotate(90deg); }
+  details.finding > div { padding: 0 18px 16px; border-top: 1px solid var(--border); }
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 10px; color: #ffffff; letter-spacing: .5px; flex-shrink: 0; }
+  .CRITICAL { border-left-color: var(--crit); } .CRITICAL .badge { background: var(--crit); }
+  .HIGH     { border-left-color: var(--high); } .HIGH .badge { background: var(--high); }
+  .MEDIUM   { border-left-color: var(--med);  } .MEDIUM .badge { background: var(--med); }
+  .LOW      { border-left-color: var(--low);  } .LOW .badge { background: var(--low); }
+  .INFO     { border-left-color: var(--info); } .INFO .badge { background: var(--info); }
+  .loc { color: var(--muted); font-size: 12px; font-weight: normal; margin-left: auto; }
+  .verified { font-size: 11px; color: var(--low); border: 1px solid var(--low); border-radius: 10px; padding: 1px 8px; flex-shrink: 0; }
+  .inspect { font-size: 11px; color: var(--info); border: 1px solid var(--info); border-radius: 10px; padding: 1px 8px; flex-shrink: 0; }
+  .kbd { background: var(--panel2); border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; }
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 18px 0; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; }
+  .stat .n { font-size: 30px; font-weight: 700; }
+  .stat .l { color: var(--muted); font-size: 12px; }
+  .pipe { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 16px 0; font-size: 12px; }
+  .stage { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+  .pipe .arrow { color: var(--muted); }
+  .danger-note { color: var(--crit); font-weight: 600; }
+  footer { color: var(--muted); font-size: 12px; text-align: center; padding: 24px; border-top: 1px solid var(--border); }
+  a { color: var(--accent); }
+  /* completion status */
+  .status { font-size: 11px; font-weight: 700; border-radius: 10px; padding: 2px 10px; border: 1px solid; background: transparent; flex-shrink: 0; letter-spacing: .3px; }
+  .status[data-state="open"]       { color: var(--crit); border-color: var(--crit); }
+  .status[data-state="inprogress"] { color: var(--high); border-color: var(--high); }
+  .status[data-state="fixed"]      { color: var(--low);  border-color: var(--low); }
+  .status[data-state="wontfix"]    { color: var(--muted); border-color: var(--muted); }
+  details.finding[data-state="fixed"]   > summary { opacity: .55; }
+  details.finding[data-state="wontfix"] > summary { opacity: .55; }
+  #progressPanel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin: 18px 0; }
+  #progressPanel h3 { margin: 0 0 8px; font-size: 14px; }
+  #progressBar { display: flex; height: 18px; border-radius: 9px; overflow: hidden; background: var(--panel2); border: 1px solid var(--border); }
+  #progressBar div { transition: width .25s; }
+  #progressBar .seg-fixed      { background: var(--low); }
+  #progressBar .seg-inprogress { background: var(--high); }
+  #progressBar .seg-wontfix    { background: var(--info); }
+  #progressLegend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  #progressLegend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+  #progressHint { font-size: 11px; color: var(--muted); margin-top: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Adversarial Pre-Release Review — Delta <small>— github.com/smarty/harness/v2</small></h1>
+  <div class="meta">2026-06-18 · reviewed at working tree commit <code>73d777a</code> (clean) · Go 1.26.4 · <code>go build ./...</code> green, <code>make test</code> (<code>-short</code>, with and without <code>-race</code>) green across all packages · DB-backed <code>storage/mysql</code> suite NOT run this pass (requires live MySQL via <code>make test.db</code>)</div>
+</header>
+<main>
+
+<h2>Verdict</h2>
+<p><em>This is a follow-up review covering only what changed since the <a href="2026-06-12_10-54-10-research-adversarial-prerelease-review.html">2026-06-12 adversarial review</a> (commit <code>2605ea5</code>), whose 17 findings are all disposed. It does not re-litigate those.</em></p>
+<p><strong>Not clear to tag yet — for documentation reasons more than code.</strong> Between <code>2605ea5</code> and <code>73d777a</code> a large new subsystem landed: the old <code>sqladapter/</code> package was split into <code>internal/adapters/</code> (Writer/Dispatcher/Recovery) plus a new exported <code>storage/mysql.Mapper</code>; a new <code>contracts.Storage</code> seam funnels every database operation through <code>Exec(ctx, any)</code>; and two brand-new public packages appeared — <code>snapshots/</code> (Load/Save with event replay) and <code>storage/mysql/</code>. The pipeline internals reviewed last time are essentially unchanged and remain solid. The blocker is <span class="danger-note">D1</span>: the README's primary example imports the deleted <code>sqladapter</code> package and calls removed options, so it will not compile against the API a consumer would actually tag. <span class="danger-note">D2</span> (the public <code>Storage</code> interface cannot be implemented by any external package, contradicting the README's DB-agnostic claim) deserves a conscious decision before the contract is frozen at a tag. The remaining items are a genuine but dormant SQL-construction bug (D3), a doc-precision overclaim (D4), and a watermark footgun (D5).</p>
+
+<div class="summary-grid" id="summaryGrid"></div>
+
+<h2>What changed since the last review (as reviewed)</h2>
+<div class="pipe">
+  <span class="stage">sqladapter/ (deleted)</span><span class="arrow">→ split into →</span>
+  <span class="stage">internal/adapters/ (Writer · Dispatcher · Recovery)</span>
+  <span class="arrow">+</span>
+  <span class="stage">storage/mysql.Mapper (exported)</span>
+</div>
+<p>All three adapters now route through the new <code>contracts.Storage</code> seam (<code>Exec(ctx, operation any) error</code>), whose operation structs live in <code>internal/storage</code>. The single <code>Options.Storage(db)</code> replaces the former <code>Options.Writer/Recoverer</code> options; <code>Options.Dispatcher</code> and <code>Options.Serializer</code> remain. New public package <code>snapshots</code> provides <code>Load</code> (snapshot + optional event replay since the high watermark, discovered reflectively via <code>internal/domainscan</code>) and <code>Save</code> (gzip+JSON snapshot persist). <code>internal/domainscan</code> centralizes the <code>Execute&lt;Foo&gt;</code>/<code>Apply&lt;Foo&gt;</code> method-shape detection shared by the router and the replay machinery. A <code>Snapshots</code> table joins <code>Messages</code> in <code>doc/mysql/schema.sql</code>.</p>
+
+<h2>Findings</h2>
+
+<div id="progressPanel">
+  <h3>Remediation progress <span id="progressCount" style="color:var(--muted);font-weight:normal"></span></h3>
+  <div id="progressBar"><div class="seg-fixed"></div><div class="seg-inprogress"></div><div class="seg-wontfix"></div></div>
+  <div id="progressLegend">
+    <span><span class="dot" style="background:var(--low)"></span>Fixed <b id="nFixed">0</b></span>
+    <span><span class="dot" style="background:var(--high)"></span>In progress <b id="nInProgress">0</b></span>
+    <span><span class="dot" style="background:var(--info)"></span>Won't fix <b id="nWontFix">0</b></span>
+    <span><span class="dot" style="background:var(--panel2);border:1px solid var(--border)"></span>Open <b id="nOpen">0</b></span>
+  </div>
+  <div id="progressHint">Status lives in this file (each entry's <code>state</code> field in the FINDINGS array) and is committed to git — update it as issues are resolved. Finding bodies live in <code>&lt;template&gt;</code> elements; everything else on this page is rendered from the data. Last status update: 2026-06-18 (initial).</div>
+</div>
+<div class="filters" id="filters"></div>
+<div id="findings"></div>
+
+<!-- ================= finding bodies ================= -->
+
+<template id="body-D1">
+    <p>The refactor renamed the public storage surface, but <code>README.md</code> (and <code>CLAUDE.md</code>) were not updated. The README's primary, copy-pasteable example still imports a deleted package and calls options that no longer exist:</p>
+<pre><code>// README.md line 90
+"github.com/smarty/harness/v2/sqladapter"   // package deleted
+
+// README.md lines 135–137
+harness.Options.Writer(sqladapter.NewWriter(db, 1, func(...){})),   // option removed
+harness.Options.Recoverer(sqladapter.NewRecovery(db)),             // option removed
+harness.Options.Dispatcher(sqladapter.NewDispatcher(kafkaPublisher{}, db)),</code></pre>
+    <p>Confirmed: <code>grep</code> finds no <code>func (singleton) Writer</code>, <code>Recoverer</code>, or <code>SerializerCount</code> in <code>config.go</code>. The current wiring is a single seam:</p>
+<pre><code>harness.Options.Storage(mysql.NewMapper(db, 1, "Snapshots", "Messages")),
+harness.Options.Dispatcher(adapters.NewDispatcher(kafkaPublisher{}, /* storage */)) // via the pipeline
+</code></pre>
+    <p>So the first thing a consumer copies from the README fails to compile against the very tag they would adopt. Secondary doc drift in the same family:</p>
+    <ul>
+      <li><code>README.md</code> still has a "<code>The sqladapter package</code>" section and the line "<em>the included <code>sqladapter</code> is a reference implementation</em>" — the package is gone (it is <code>internal/adapters</code> + <code>storage/mysql</code> now).</li>
+      <li><code>CLAUDE.md</code> references "<code>make test.db</code> — runs the <code>sqladapter</code> package tests" and a "Reference adapter (<code>sqladapter/</code>)" section; the Makefile target now points at <code>storage/mysql</code>. (Internal guidance, lower stakes, but wrong.)</li>
+      <li>The new <code>snapshots</code> Load/Save feature — a headline addition of this cycle — is entirely undocumented in the README.</li>
+    </ul>
+    <p><strong>Recommendation:</strong> rewrite the README example to the <code>Options.Storage(mysql.NewMapper(...))</code> API, replace the <code>sqladapter</code> section with <code>storage/mysql</code> + <code>internal/adapters</code>, document <code>snapshots.Load</code>/<code>Save</code>, and refresh <code>CLAUDE.md</code>. Consider a compile-checked example (a <code>// Example</code> test or a <code>doc/</code> buildable snippet) so README rot fails CI next time.</p>
+</template>
+
+<template id="body-D2">
+    <p><code>contracts.Storage</code> is exported and accepts an open <code>any</code> operation, which reads as an extensibility seam:</p>
+<pre><code>type Storage interface {
+    Exec(ctx context.Context, operation any) error
+}</code></pre>
+    <p>But every operation type it must switch on — <code>InsertMessages</code>, <code>MarkMessagesDispatched</code>, <code>LoadUndispatchedBounds</code>, <code>LoadUndispatchedPage</code>, <code>SaveSnapshot</code>, <code>LoadSnapshot</code>, <code>LoadLatestSnapshot</code>, <code>LoadEventsSince</code> — lives in <code>internal/storage</code>. Go's <code>internal/</code> import rule means no package outside <code>github.com/smarty/harness/v2/...</code> can name those types, so <strong>no third party can implement <code>Storage</code></strong>: <code>storage/mysql.Mapper</code> is the only possible implementation in the universe.</p>
+    <p>This directly contradicts the standing README claim:</p>
+    <blockquote><em>"It does not own the database. You supply a <code>Writer</code> and a <code>Recoverer</code>; the included <code>sqladapter</code> is a reference implementation against a specific MySQL schema."</em></blockquote>
+    <p>Under the old design, callers implemented the public <code>Writer</code>/<code>Recoverer</code>/<code>Dispatcher</code> interfaces (over the public <code>*contracts.Message</code>) and could target any datastore. The new <code>Storage</code> seam removes that: swapping the database now requires forking the module. This may well be intentional (MySQL-only for the v2 line, with <code>mysql.Mapper</code> as the supported surface) — the commit trail ("<em>Database tables are the Mapper's concern</em>", "<em>sqladapter package is internal</em>") points that way. But it is a contract-shaping decision that, once tagged, is permanent.</p>
+    <p><strong>Decide before tagging:</strong> either (a) accept MySQL-only, and make the interface and README say so (and reconsider whether <code>Exec(any)</code> earns its open shape versus a small set of explicit methods); or (b) export the operation types (e.g. promote <code>internal/storage</code> to a public package) so the seam is genuinely implementable. The status quo advertises pluggability it does not deliver.</p>
+</template>
+
+<template id="body-D3">
+    <p><code>Mapper.loadEventsSince</code> (<code>storage/mysql/mapper.go:311</code>) builds the <code>type IN (...)</code> clause while de-duplicating names, but decides whether to emit a separating comma from the <em>original</em> loop index rather than from how many placeholders it has actually written:</p>
+<pre><code>for e, name := range op.Types {
+    if slices.Contains(statement.args, any(name)) {
+        continue            // duplicate skipped — but no comma is retracted
+    }
+    statement.args = append(statement.args, name)
+    statement.text.WriteString(`?`)
+    if e &lt; len(op.Types)-1 {  // comma keyed on e, not on dedup state
+        statement.text.WriteString(`,`)
+    }
+}
+...
+statement.text.WriteString(`) AND id &gt; ? ORDER BY id ASC`)</code></pre>
+    <p>When the <em>last</em> requested name is a duplicate (skipped), the placeholder written for the preceding name already emitted a trailing comma, producing invalid SQL. Reproduced with an isolated copy of the loop:</p>
+<pre><code>["A","B","C"]      -> IN (?,?,?)   args=[A B C 100]   OK
+["A","A","B"]      -> IN (?,?)     args=[A B 100]     OK
+["A","B","B"]      -> IN (?,?,)    args=[A B 100]     &lt;-- trailing comma, MySQL syntax error
+["A","B","C","C"]  -> IN (?,?,?,)  args=[A B C 100]   &lt;-- trailing comma, MySQL syntax error</code></pre>
+    <p><strong>Reachability (why it is LOW, not higher):</strong> the only driver today is <code>snapshots.Load</code>, which derives <code>Types</code> from <code>domainscan.AppliedTypes</code> — already de-duplicated by <code>reflect.Type</code>. A duplicate <em>name</em> therefore only arises if two distinct domain event types are registered under the same canonical name (a misconfiguration) <em>and</em> the collision sorts last in method order. So it is dormant, not live. But it is incorrect defensive code shipping in an exported package, and it would surface as an opaque MySQL syntax error rather than a clear diagnostic.</p>
+    <p><strong>Fix:</strong> drive the comma off the count of placeholders already written (e.g. a <code>wrote</code> bool or <code>len(statement.args) &gt; baseline</code>), not off <code>e</code>. A unit test with a trailing-duplicate input would lock it.</p>
+</template>
+
+<template id="body-D4">
+    <p><code>storage/mysql/mapper.go:18</code> documents the type as concurrency-safe:</p>
+<pre><code>// Mapper leverages a pool of re-usable statement buffers and is safe for concurrent use.</code></pre>
+    <p>That is the design intent and it matters: the pipeline shares one <code>Mapper</code> across three goroutines — persistence (<code>InsertMessages</code>), broadcast (<code>MarkMessagesDispatched</code>), and recovery (<code>LoadUndispatched*</code>) — so they genuinely run concurrently. The per-call <code>statements</code> pool handles the statement/arg buffers correctly. But one field is shared, mutable, and unsynchronized:</p>
+<pre><code>legacyWrites []any   // instance-level; reset+appended in performLegacyWrite
+
+func (this *Mapper) performLegacyWrite(ctx, tx, operation) {
+    this.legacyWrites = generic.Reclaim(this.legacyWrites, legacyWritesBufferCapacity)
+    for _, message := range operation.Messages {
+        this.legacyWrites = append(this.legacyWrites, message.Value)
+    }
+    this.legacyWrite(ctx, tx, this.legacyWrites...)
+}</code></pre>
+    <p>It is safe <em>as the pipeline drives it</em> — only the single persistence goroutine ever issues <code>InsertMessages</code>, and no other operation touches <code>legacyWrites</code> — so this is not a live race in the shipped wiring. But two concurrent <code>InsertMessages</code> calls on a shared <code>Mapper</code> (which the blanket "safe for concurrent use" invites a consumer to do) would race on that slice and corrupt the legacy hook's argument list. <code>-race</code> would not catch it today because the pipeline never makes that call concurrently.</p>
+    <p><strong>Recommendation:</strong> either qualify the doc ("safe for concurrent use except for concurrent message inserts, which the pipeline never issues"), or scope <code>legacyWrites</code> to the call (build it as a local, or borrow it from the statement). Low stakes — <code>legacyWrite</code> is an explicitly deprecated migration hook that defaults to a no-op — but the doc currently overpromises.</p>
+</template>
+
+<template id="body-D5">
+    <p><code>snapshots.Load</code> reports <code>NewHighWatermark == 0</code> whenever no events are replayed — when replay is not opted into, when the domain applies no event types, or when the event query returns nothing — while <code>PreviousHighWatermark</code> carries the loaded snapshot's watermark. This is asserted as intended behavior:</p>
+<pre><code>// snapshots/load_test.go:154-156 (TestLatestPlainJSONLoadedAndAppliedToDomain)
+this.So(result.PreviousHighWatermark, should.Equal, uint64(42))
+this.So(result.NewHighWatermark,      should.Equal, uint64(0))   // &lt;-- 0, not 42
+this.So(result.EventsAppliedCount,    should.Equal, uint64(0))</code></pre>
+    <p>Because it is tested, treat this as a <em>footgun to document</em> rather than an outright defect. The hazard: a caller who rebuilds a domain, then persists a fresh snapshot using <code>result.NewHighWatermark</code> without first checking <code>EventsAppliedCount &gt; 0</code>, will write a snapshot at watermark <strong>0</strong> — silently corrupting the watermark chain (a later <code>Load</code> would then replay the entire event history from the beginning). The natural reading of a field named <code>NewHighWatermark</code> is "&ge; the previous one," and <code>0</code> violates that.</p>
+    <p><strong>Recommendation:</strong> default <code>result.NewHighWatermark</code> to <code>PreviousHighWatermark</code> when no events are applied (so it always denotes "the domain reflects everything through this id"), or, if the current semantics are deliberate, document on <code>LoadResult.NewHighWatermark</code> that it is only meaningful when <code>EventsAppliedCount &gt; 0</code> and is otherwise zero.</p>
+</template>
+
+<template id="body-D6">
+    <ul>
+      <li><strong>Recovery cursor underflow on a degenerate <code>Min</code>.</strong> <code>adapters/recovery.go:56</code> sets <code>cursor = op.Min - 1</code>, with the comment "auto-increment ids start at 1, so no underflow." True for the shipped schema, but a custom <code>contracts.Storage</code> (or a future table that recycles/zeroes ids) returning <code>Min == 0</code> would underflow <code>cursor</code> to <code>MaxUint64</code>, making <code>cursor &gt;= boundary</code> immediately true and silently skipping recovery entirely. Defensive only — a one-line guard (<code>if op.Min &gt; 0</code>) would remove the sharp edge.</li>
+      <li><strong><code>LoadOptions.LoadedSnapshot</code> default is a non-pointer.</strong> <code>snapshots/load.go:119</code> defaults <code>LoadedSnapshot</code> to <code>struct{}{}</code>. If a caller omits the option but a snapshot exists, <code>json.Unmarshal</code> fails with an opaque "non-pointer" error (and the later <code>reflect.Value.Elem()</code> would panic if it got that far). Harmless in practice — the option is always supplied — but a clearer default or an explicit "you must supply LoadedSnapshot" check would be friendlier.</li>
+      <li><strong>Hard-coded <code>ContentType: "application/json"</code> persists into the recovery/snapshot paths.</strong> <code>mapper.go:241</code> (page load) and <code>save.go:72</code> both hard-code JSON, consistent with the deferred F15 decision from the prior review. Correct for the only serializer shipping today; still belongs on the schema-migration backlog when a <code>content_type</code> column lands.</li>
+    </ul>
+</template>
+
+<template id="body-D7">
+    <p>Properties checked in the new code and confirmed <em>correct</em>, recorded so they need not be re-checked:</p>
+    <ul>
+      <li><strong>Recovery keyset cursor</strong> (<code>adapters/recovery.go</code>): snapshots <code>MIN/MAX</code> bounds once, pages <code>id &gt; cursor AND id &lt;= boundary ORDER BY id LIMIT ?</code>, and advances the cursor only after a clean page — a failed page is re-served, never skipped; live-traffic rows written after the snapshot fall outside the boundary by construction. Sound.</li>
+      <li><strong>Dispatcher <code>ID==0</code> guard</strong> (<code>adapters/dispatcher.go:48-52</code>): preserved from the F11 fix — an un-markable message is rejected before publishing, so recovery can't loop on it forever.</li>
+      <li><strong><code>Mapper.insert</code> transaction safety</strong>: <code>recover()</code> converts a legacy-hook panic into rollback+error; the named-return error path rolls back on every failure; commit errors propagate. <code>assignIDs</code> validates <code>affected == len(messages)</code> and <code>first &gt; 0</code> before deriving ids by stride.</li>
+      <li><strong>SQL identifier safety</strong>: <code>quoteTableName</code> rejects any table name not matching <code>^[A-Za-z0-9_]+$</code> and backtick-wraps it — table names can't be bound as placeholders, and this closes the interpolation hole.</li>
+      <li><strong>Buffer-reclaim discipline</strong>: <code>generic.Reclaim</code>/<code>ReclaimBuffer</code> are applied to the new <code>statement</code> buffers (<code>statement.reset()</code>) and the deprecated <code>legacyWrites</code>, at sensible steady-state capacities — consistent with the F13 remediation.</li>
+      <li><strong>Statement pool</strong>: <code>generic.PoolT[*statement]</code> Get/Put per operation; concurrent Get/Put across the persistence/broadcast/recovery goroutines is safe.</li>
+      <li><strong>Schema alignment</strong>: <code>doc/mysql/schema.sql</code> (<code>Snapshots</code> + <code>Messages</code>) matches every column the Mapper reads/writes (<code>created</code>, <code>high_watermark</code>, <code>payload</code>, <code>content_type</code>, <code>content_encoding</code>; <code>id</code>, <code>dispatched</code>, <code>type</code>, <code>payload</code>).</li>
+      <li><strong>Build &amp; short tests</strong>: <code>go build ./...</code> clean; <code>make test</code> (<code>-short</code>, with and without <code>-race</code>) green in root, contracts, adapters, domainscan, generic, pipeline, snapshots, and storage/mysql.</li>
+    </ul>
+    <p><em>Not verified this pass:</em> the DB-backed <code>storage/mysql</code> suite (<code>make test.db</code>) was not run here — it needs a live MySQL. Run it before tagging to exercise the real INSERT/stride/recovery/snapshot paths end-to-end.</p>
+</template>
+
+</main>
+<footer>Adversarial pre-release review (delta) · smarty/harness v2 · 2026-06-18 · covers changes since 2026-06-12 review (commit 2605ea5 → 73d777a) · working tree left clean</footer>
+<script>
+  // ============ findings metadata (the single source of truth) ============
+  // state: "open" | "inprogress" | "fixed" | "wontfix"
+  // evidence: "REPRODUCED" | "BY INSPECTION" | null
+  // Each entry's body lives in <template id="body-<id>"> above.
+  const FINDINGS = [
+    {
+      id: 'D1', severity: 'HIGH', state: 'open', evidence: 'BY INSPECTION',
+      title: 'README example will not compile: imports the deleted <code>sqladapter</code> package and removed options',
+      loc: 'README.md:90,135-137 · CLAUDE.md · config.go',
+    },
+    {
+      id: 'D2', severity: 'MEDIUM', state: 'open', evidence: 'BY INSPECTION',
+      title: 'Public <code>contracts.Storage</code> cannot be implemented externally (operation types are in <code>internal/storage</code>)',
+      loc: 'contracts/contracts.go:52 · internal/storage/operations.go',
+    },
+    {
+      id: 'D3', severity: 'LOW', state: 'open', evidence: 'REPRODUCED',
+      title: '<code>Mapper.loadEventsSince</code> emits a trailing comma — <code>IN (?,?,)</code> — when the last requested type name is a duplicate',
+      loc: 'storage/mysql/mapper.go:311-340',
+    },
+    {
+      id: 'D4', severity: 'LOW', state: 'open', evidence: 'BY INSPECTION',
+      title: '<code>Mapper</code> documents "safe for concurrent use" but <code>legacyWrites</code> is unsynchronized shared state',
+      loc: 'storage/mysql/mapper.go:18,100-108',
+    },
+    {
+      id: 'D5', severity: 'LOW', state: 'open', evidence: 'BY INSPECTION',
+      title: '<code>snapshots.Load</code> returns <code>NewHighWatermark=0</code> when no events replay — watermark footgun on Save',
+      loc: 'snapshots/load.go:166-201 · load_test.go:155',
+    },
+    {
+      id: 'D6', severity: 'INFO', state: 'open', evidence: null,
+      title: 'Minor / defensive: recovery <code>Min-1</code> underflow, non-pointer <code>LoadedSnapshot</code> default, hard-coded JSON ContentType',
+      loc: 'adapters/recovery.go:56 · snapshots/load.go:119 · mapper.go:241',
+    },
+    {
+      id: 'D7', severity: 'INFO', state: 'open', evidence: null,
+      title: 'Things checked in the new code that are <em>fine</em> (so you don\'t have to re-check)',
+      loc: '',
+    },
+  ];
+
+  // ============ rendering (no data below this line) ============
+  const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
+  const SEV_LABELS = { CRITICAL: 'Critical', HIGH: 'High', MEDIUM: 'Medium', LOW: 'Low', INFO: 'Info' };
+  const SEV_COLORS = { CRITICAL: 'var(--crit)', HIGH: 'var(--high)', MEDIUM: 'var(--med)', LOW: 'var(--low)', INFO: 'var(--info)' };
+  const STATE_LABELS = { open: 'OPEN', inprogress: 'IN PROGRESS', fixed: 'FIXED', wontfix: "WON'T FIX" };
+
+  function el(tag, attrs = {}, html = '') {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+    if (html) node.innerHTML = html;
+    return node;
+  }
+
+  // findings
+  const container = document.getElementById('findings');
+  for (const f of FINDINGS) {
+    const details = el('details', { class: 'finding ' + f.severity, 'data-state': f.state, id: f.id });
+    const summary = el('summary');
+    summary.appendChild(el('span', { class: 'badge' }, f.severity));
+    const chip = el('span', { class: 'status', 'data-state': f.state }, STATE_LABELS[f.state] || f.state.toUpperCase());
+    chip.title = 'Status is recorded in this file (FINDINGS array) and committed to git';
+    summary.appendChild(chip);
+    summary.appendChild(el('span', {}, ' ' + f.id + ' — ' + f.title + ' '));
+    if (f.evidence) summary.appendChild(el('span', { class: f.evidence === 'REPRODUCED' ? 'verified' : 'inspect' }, f.evidence));
+    if (f.loc) summary.appendChild(el('span', { class: 'loc' }, f.loc));
+    details.appendChild(summary);
+
+    const body = el('div');
+    const template = document.getElementById('body-' + f.id);
+    if (template) body.appendChild(template.content.cloneNode(true));
+    else body.appendChild(el('p', {}, '<em>Missing template body-' + f.id + '</em>'));
+    details.appendChild(body);
+    container.appendChild(details);
+  }
+
+  // summary grid (computed)
+  const grid = document.getElementById('summaryGrid');
+  for (const sev of SEVERITIES) {
+    const all = FINDINGS.filter(f => f.severity === sev);
+    const open = all.filter(f => f.state === 'open' || f.state === 'inprogress').length;
+    const stat = el('div', { class: 'stat' });
+    stat.appendChild(el('div', { class: 'n', style: 'color:' + SEV_COLORS[sev] }, String(all.length)));
+    stat.appendChild(el('div', { class: 'l' }, SEV_LABELS[sev] + (open < all.length ? ' (' + open + ' open)' : '')));
+    grid.appendChild(stat);
+  }
+
+  // filters (computed counts)
+  const filters = document.getElementById('filters');
+  const filterDefs = [['ALL', 'All (' + FINDINGS.length + ')']].concat(
+    SEVERITIES.map(s => [s, SEV_LABELS[s] + ' (' + FINDINGS.filter(f => f.severity === s).length + ')']));
+  for (const [sev, label] of filterDefs) {
+    const button = el('button', { 'data-sev': sev }, label);
+    if (sev === 'ALL') button.classList.add('active');
+    button.addEventListener('click', () => {
+      filters.querySelectorAll('button[data-sev]').forEach(b => b.classList.remove('active'));
+      button.classList.add('active');
+      container.querySelectorAll('details.finding').forEach(d => {
+        d.style.display = (sev === 'ALL' || d.classList.contains(sev)) ? '' : 'none';
+      });
+    });
+    filters.appendChild(button);
+  }
+  const expand = el('button', { id: 'expandAll' }, 'Expand all');
+  let expanded = false;
+  expand.addEventListener('click', () => {
+    expanded = !expanded;
+    container.querySelectorAll('details.finding').forEach(d => d.open = expanded);
+    expand.textContent = expanded ? 'Collapse all' : 'Expand all';
+  });
+  filters.appendChild(expand);
+
+  // progress (computed)
+  const counts = { open: 0, inprogress: 0, fixed: 0, wontfix: 0 };
+  FINDINGS.forEach(f => counts[f.state]++);
+  const total = FINDINGS.length;
+  const resolved = counts.fixed + counts.wontfix;
+  document.getElementById('nFixed').textContent = counts.fixed;
+  document.getElementById('nInProgress').textContent = counts.inprogress;
+  document.getElementById('nWontFix').textContent = counts.wontfix;
+  document.getElementById('nOpen').textContent = counts.open;
+  document.getElementById('progressCount').textContent =
+    '— ' + resolved + ' of ' + total + ' resolved' + (counts.inprogress ? ' (' + counts.inprogress + ' in progress)' : '');
+  const bar = document.getElementById('progressBar');
+  bar.querySelector('.seg-fixed').style.width = (100 * counts.fixed / total) + '%';
+  bar.querySelector('.seg-inprogress').style.width = (100 * counts.inprogress / total) + '%';
+  bar.querySelector('.seg-wontfix').style.width = (100 * counts.wontfix / total) + '%';
+</script>
+</body>
+</html>
