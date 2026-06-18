@@ -60,7 +60,6 @@ type loadConfig struct {
 		NamesByType map[reflect.Type]string
 	}
 	LoadedSnapshot any
-	LatestSnapshot any
 }
 
 type loadOption func(*loadConfig)
@@ -93,9 +92,6 @@ func (loading) RegisteredEvents(typesByName map[string]reflect.Type, namesByType
 func (loading) LoadedSnapshot(pointer any) loadOption {
 	return func(config *loadConfig) { config.LoadedSnapshot = pointer }
 }
-func (loading) LatestSnapshot(pointer any) loadOption {
-	return func(config *loadConfig) { config.LatestSnapshot = pointer }
-}
 
 func (loading) defaults(options ...loadOption) []loadOption {
 	var nop loadNop
@@ -107,7 +103,6 @@ func (loading) defaults(options ...loadOption) []loadOption {
 		LoadOptions.DomainEvents(),
 		LoadOptions.RegisteredEvents(nil, nil),
 		LoadOptions.LoadedSnapshot(struct{}{}),
-		LoadOptions.LatestSnapshot(nil),
 	}, options...)
 }
 
