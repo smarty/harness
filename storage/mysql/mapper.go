@@ -245,17 +245,17 @@ func (this *Mapper) loadUndispatchedPage(ctx context.Context, operation *storage
 	return rows.Err()
 }
 
-func (this *Mapper) saveSnapshot(ctx context.Context, operation *storage.SaveSnapshot) error {
+func (this *Mapper) saveSnapshot(ctx context.Context, op *storage.SaveSnapshot) error {
 	table, err := quoteTableName(this.snapshotsTable)
 	if err != nil {
 		return err
 	}
-	query := fmt.Sprintf(
-		`INSERT INTO %s (created, high_watermark, payload, content_type, content_encoding) VALUES (?, ?, ?, ?, ?)`,
-		table)
-	if _, err := this.handle.ExecContext(ctx, query,
-		operation.Timestamp, operation.HighWatermark, operation.Payload,
-		operation.ContentType, operation.ContentEncoding); err != nil {
+	query := fmt.Sprintf(`
+		INSERT INTO %s (created, high_watermark, payload, content_type, content_encoding)
+		VALUES (?, ?, ?, ?, ?)`, table)
+	_, err = this.handle.ExecContext(ctx, query,
+		op.Timestamp, op.HighWatermark, op.Payload, op.ContentType, op.ContentEncoding)
+	if err != nil {
 		return fmt.Errorf("save snapshot: %w", err)
 	}
 	return nil
