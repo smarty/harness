@@ -278,13 +278,13 @@ func (this *Mapper) loadLatestSnapshot(ctx context.Context, operation *storage.L
 		return err
 	}
 	query := fmt.Sprintf(`
-		SELECT high_watermark, payload, content_type, content_encoding
+		SELECT id, high_watermark, payload, content_type, content_encoding
 		  FROM %s
 		 ORDER BY id DESC
 		 LIMIT 1`, table)
 	var result storage.LoadedSnapshotResult
 	row := this.handle.QueryRowContext(ctx, query)
-	err = row.Scan(&result.HighWatermark, &result.Payload, &result.ContentType, &result.ContentEncoding)
+	err = row.Scan(&result.SnapshotID, &result.HighWatermark, &result.Payload, &result.ContentType, &result.ContentEncoding)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -305,7 +305,7 @@ func (this *Mapper) loadSnapshot(ctx context.Context, operation *storage.LoadSna
 		SELECT high_watermark, payload, content_type, content_encoding
 		  FROM %s
 		 WHERE id = ?`, table)
-	var result storage.LoadedSnapshotResult
+	result := storage.LoadedSnapshotResult{SnapshotID: operation.ID}
 	row := this.handle.QueryRowContext(ctx, query, operation.ID)
 	err = row.Scan(&result.HighWatermark, &result.Payload, &result.ContentType, &result.ContentEncoding)
 	if errors.Is(err, sql.ErrNoRows) {

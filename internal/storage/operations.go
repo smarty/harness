@@ -70,6 +70,7 @@ type (
 	}
 	LoadedSnapshotResult struct {
 		Found           bool
+		SnapshotID      uint64
 		HighWatermark   uint64
 		Payload         []byte
 		ContentType     string

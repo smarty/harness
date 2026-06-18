@@ -34,7 +34,8 @@ func (this *MapperFixture) TestSaveThenLoadLatestSnapshot() {
 	op := this.loadLatestSnapshot()
 
 	this.So(op.Result.Found, should.BeTrue)
-	this.So(op.Result.HighWatermark, should.Equal, uint64(20))
+	this.So(op.Result.SnapshotID, should.Equal, 2)
+	this.So(op.Result.HighWatermark, should.Equal, 20)
 	this.So(op.Result.Payload, should.Equal, []byte(`{"v":2}`))
 	this.So(op.Result.ContentType, should.Equal, "application/json")
 	this.So(op.Result.ContentEncoding, should.Equal, "gzip")
@@ -81,7 +82,8 @@ func (this *MapperFixture) TestLoadSnapshotByID() {
 	this.So(this.subject.Exec(this.ctx, op), should.BeNil)
 
 	this.So(op.Result.Found, should.BeTrue)
-	this.So(op.Result.HighWatermark, should.Equal, uint64(20))
+	this.So(op.Result.SnapshotID, should.Equal, id)
+	this.So(op.Result.HighWatermark, should.Equal, 20)
 	this.So(op.Result.Payload, should.Equal, []byte(`{"v":2}`))
 	this.So(op.Result.ContentType, should.Equal, "application/json")
 	this.So(op.Result.ContentEncoding, should.Equal, "gzip")
@@ -134,5 +136,5 @@ func (this *MapperFixture) TestLoadEventsSinceEmptyTypeSet() {
 	this.So(this.subject.Exec(this.ctx, op), should.NOT.BeNil)
 
 	this.So(len(op.Result.Events), should.Equal, 0)
-	this.So(op.Result.NewHighWatermark, should.Equal, uint64(0))
+	this.So(op.Result.NewHighWatermark, should.Equal, 0)
 }
