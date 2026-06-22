@@ -127,9 +127,10 @@ func main() {
     db, _ := sql.Open("mysql", "user:pass@tcp(localhost:3306)/harness?parseTime=true")
 
     // One mapper is the whole storage seam: the pipeline builds its persistence,
-    // dispatched-marking, and startup recovery on top of it. stride=1 matches a
-    // server with auto_increment_increment=1; the strings are the table names.
-    mapper := mysql.NewMapper(db, 1, "Snapshots", "Messages")
+    // dispatched-marking, and startup recovery on top of it. The mapper reads the
+    // server's auto_increment_increment itself on its first write. Table names
+    // default to "Messages" and "Snapshots"; override them with functional options.
+    mapper := mysql.NewMapper(db)
 
     pipeline, err := harness.New(ctx,
         harness.Options.DomainTypes(Handlers{}),
@@ -225,10 +226,20 @@ Each value passed to `Options.DomainTypes(...)` must satisfy two parallel contra
 
 ## The `storage/mysql` package
 
-`storage/mysql.Mapper` is the bundled storage implementation. A single `Mapper` backs the whole module: `harness` builds its persistence, dispatched-marking, and startup recovery on top of it, and the `snapshots` package uses the same `Mapper` for snapshot load/save. Construct it with the `*sql.DB`, the auto-increment stride, and the two table names:
+`storage/mysql.Mapper` is the bundled storage implementation. A single `Mapper` backs the whole module: `harness` builds its persistence, dispatched-marking, and startup recovery on top of it, and the `snapshots` package uses the same `Mapper` for snapshot load/save. Construct it with the `*sql.DB` and optional functional options; the table names default to `Messages` and `Snapshots`. It discovers the server's `auto_increment_increment` itself on its first write, so construction does no I/O and never blocks startup when the database is unavailable:
 
 ```go
-mapper := mysql.NewMapper(db, 1, "Snapshots", "Messages")
+// Defaults: the Messages and Snapshots tables.
+mapper := mysql.NewMapper(db)
+```
+
+Override either table name with a functional option:
+
+```go
+mapper := mysql.NewMapper(db,
+    mysql.Options.MessagesTableName("Messages"),
+    mysql.Options.SnapshotsTableName("Snapshots"),
+)
 ```
 
 It targets the schema in `doc/mysql/schema.sql`:

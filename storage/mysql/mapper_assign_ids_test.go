@@ -20,7 +20,9 @@ type AssignIDsFixture struct {
 }
 
 func (this *AssignIDsFixture) mapper(stride uint64) *Mapper {
-	return NewMapper(nil, stride, "Snapshots", "Messages")
+	result := NewMapper(nil)
+	result.stride.Store(stride)
+	return result
 }
 func (this *AssignIDsFixture) messages(count int) (results []*contracts.Message) {
 	for range count {
@@ -38,17 +40,6 @@ func (this *AssignIDsFixture) TestStridedIDsDerivedFromFirstIdentity() {
 	this.So(messages[0].ID, should.Equal, uint64(100))
 	this.So(messages[1].ID, should.Equal, uint64(107))
 	this.So(messages[2].ID, should.Equal, uint64(114))
-}
-
-func (this *AssignIDsFixture) TestZeroStrideDefaultsToOne() {
-	messages := this.messages(3)
-
-	err := this.mapper(0).assignIDs(messages, 3, 5)
-
-	this.So(err, should.BeNil)
-	this.So(messages[0].ID, should.Equal, uint64(5))
-	this.So(messages[1].ID, should.Equal, uint64(6))
-	this.So(messages[2].ID, should.Equal, uint64(7))
 }
 
 func (this *AssignIDsFixture) TestSingleMessage() {

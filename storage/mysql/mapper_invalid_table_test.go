@@ -25,7 +25,10 @@ type MapperInvalidTableFixture struct {
 
 func (this *MapperInvalidTableFixture) Setup() {
 	this.ctx = this.Context()
-	this.subject = NewMapper(nil, 1, "bad snapshots name", "bad messages name")
+	this.subject = NewMapper(nil,
+		Options.SnapshotsTableName("bad snapshots name"),
+		Options.MessagesTableName("bad messages name"),
+	)
 }
 
 func (this *MapperInvalidTableFixture) TestMarkMessagesDispatched() {

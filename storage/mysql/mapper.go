@@ -10,6 +10,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"sync/atomic"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/generic"
@@ -17,12 +18,13 @@ import (
 )
 
 // Mapper translates storage operations into SQL against the Snapshots and
-// Messages tables. It pools its reusable buffers and holds no other mutable
-// state, so it is safe for concurrent use — which it must be, since the pipeline
-// drives it from the persistence, broadcast, and recovery stages at once.
+// Messages tables. It pools its reusable buffers and its only mutable state is
+// the lazily-detected stride (held in an atomic), so it is safe for concurrent
+// use — which it must be, since the pipeline drives it from the persistence,
+// broadcast, and recovery stages at once.
 type Mapper struct {
 	handle         *sql.DB
-	stride         uint64
+	stride         atomic.Uint64
 	snapshotsTable string
 	messagesTable  string
 	statements     *generic.PoolT[*statement]
@@ -30,15 +32,16 @@ type Mapper struct {
 	legacyArgs     *generic.PoolT[*legacyBuffer]          // Deprecated; pooled scratch buffers for the legacy hook
 }
 
-func NewMapper(handle *sql.DB, stride uint64, snapshotsTableName, messagesTableName string) *Mapper {
-	return &Mapper{
-		handle:         handle,
-		stride:         cmp.Or(stride, 1),
-		snapshotsTable: snapshotsTableName,
-		messagesTable:  messagesTableName,
-		statements:     generic.NewPoolT(newStatement),
-		legacyArgs:     generic.NewPoolT(newLegacyBuffer),
+func NewMapper(handle *sql.DB, options ...option) *Mapper {
+	this := &Mapper{
+		handle:     handle,
+		statements: generic.NewPoolT(newStatement),
+		legacyArgs: generic.NewPoolT(newLegacyBuffer),
 	}
+	for _, option := range append(Options.defaults(), options...) {
+		option(this)
+	}
+	return this
 }
 
 // Deprecated
@@ -76,9 +79,32 @@ func (this *Mapper) Exec(ctx context.Context, operation any) error {
 	}
 }
 
+// ensureStride lazily discovers the server's auto_increment_increment on the
+// first write and caches it; a zero atomic means "not yet detected". It runs on
+// the insert path rather than at construction so a database outage defers
+// detection through the persistence stage's existing retry-forever loop instead
+// of blocking startup. The bare SELECT reads the session value, which each
+// pooled connection inherits from the global at connect time; this codebase
+// never issues SET on the variable, so any connection returns the representative
+// value.
+func (this *Mapper) ensureStride(ctx context.Context) error {
+	if this.stride.Load() != 0 {
+		return nil
+	}
+	var detected uint64
+	if err := this.handle.QueryRowContext(ctx, `SELECT @@auto_increment_increment`).Scan(&detected); err != nil {
+		return err
+	}
+	this.stride.Store(cmp.Or(detected, 1))
+	return nil
+}
+
 func (this *Mapper) insertMessages(ctx context.Context, operation *storage.InsertMessages) (err error) {
 	if len(operation.Messages) == 0 {
 		return nil
+	}
+	if err := this.ensureStride(ctx); err != nil {
+		return err
 	}
 	tx, err := this.handle.BeginTx(ctx, nil)
 	if err != nil {
@@ -164,8 +190,9 @@ func (this *Mapper) assignIDs(messages []*contracts.Message, affected, first int
 	if first <= 0 {
 		return errIdentityFailure
 	}
+	stride := this.stride.Load()
 	for i, message := range messages {
-		message.ID = uint64(first) + uint64(i)*this.stride
+		message.ID = uint64(first) + uint64(i)*stride
 	}
 	return nil
 }

@@ -48,7 +48,7 @@ func (this *MapperFixture) TestLoadLatestSnapshotEmptyTableReportsNotFound() {
 }
 
 func (this *MapperFixture) TestSnapshotRejectsInvalidTableName() {
-	mapper := NewMapper(this.handle, this.stride, "Snap; DROP", "Messages")
+	mapper := NewMapper(this.handle, Options.SnapshotsTableName("Snap; DROP"))
 
 	save := &storage.SaveSnapshot{Timestamp: time.Now(), Payload: []byte(`{}`)}
 	this.So(mapper.Exec(this.ctx, save), should.NOT.BeNil)

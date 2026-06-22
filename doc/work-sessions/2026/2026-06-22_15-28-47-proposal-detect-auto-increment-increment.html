@@ -1,0 +1,430 @@
+<title>Proposal: Detect auto_increment_increment at runtime</title>
+<style>
+  :root {
+    --ink: #1c2230;
+    --muted: #5b6675;
+    --line: #d9dee6;
+    --accent: #1f6feb;
+    --accent-soft: #e7f0ff;
+    --warn: #b54708;
+    --warn-soft: #fff4e5;
+    --good: #1a7f43;
+    --good-soft: #e7f6ec;
+    --code-bg: #0f1626;
+    --code-ink: #e6edf3;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    line-height: 1.6;
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 6rem;
+  }
+  h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 .25rem; }
+  h2 {
+    font-size: 1.35rem; margin: 2.6rem 0 .8rem;
+    padding-bottom: .35rem; border-bottom: 2px solid var(--line);
+  }
+  h3 { font-size: 1.08rem; margin: 1.6rem 0 .5rem; }
+  .subtitle { color: var(--muted); font-size: 1.05rem; margin: 0 0 1.5rem; }
+  .meta {
+    font-size: .85rem; color: var(--muted);
+    background: #f6f8fa; border: 1px solid var(--line); border-radius: 8px;
+    padding: .75rem 1rem; margin-bottom: 2rem;
+  }
+  .meta code { background: rgba(0,0,0,.05); padding: .1rem .35rem; border-radius: 4px; }
+  code {
+    font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    font-size: .9em;
+  }
+  p code, li code, td code { background: rgba(31,111,235,.08); color: #0a3d91; padding: .08rem .35rem; border-radius: 4px; }
+  pre {
+    background: var(--code-bg); color: var(--code-ink);
+    padding: 1rem 1.15rem; border-radius: 10px; overflow-x: auto;
+    font-size: .85rem; line-height: 1.5; margin: 1rem 0;
+  }
+  pre code { background: none; color: inherit; padding: 0; }
+  .tok-c { color: #8b98a9; font-style: italic; }
+  .tok-k { color: #ff7b72; }
+  .tok-s { color: #a5d6ff; }
+  .tok-f { color: #d2a8ff; }
+  .tok-add { color: #7ee787; }
+  .tok-del { color: #ff9492; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--line); padding: .55rem .7rem; text-align: left; vertical-align: top; }
+  th { background: #f6f8fa; font-weight: 600; }
+  .callout {
+    border-radius: 8px; padding: .9rem 1.1rem; margin: 1.2rem 0;
+    border: 1px solid; font-size: .95rem;
+  }
+  .callout.accent { background: var(--accent-soft); border-color: #b9d4ff; }
+  .callout.warn { background: var(--warn-soft); border-color: #f1c089; }
+  .callout.good { background: var(--good-soft); border-color: #abdcbb; }
+  .callout strong { display: inline; }
+  .tag {
+    display: inline-block; font-size: .7rem; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; padding: .15rem .5rem; border-radius: 999px; vertical-align: middle;
+  }
+  .tag.rec { background: var(--good-soft); color: var(--good); border: 1px solid #abdcbb; }
+  .tag.alt { background: #f1f3f5; color: var(--muted); border: 1px solid var(--line); }
+  ul.check { list-style: none; padding-left: 0; }
+  ul.check li { position: relative; padding-left: 1.7rem; margin: .4rem 0; }
+  ul.check li::before {
+    content: "☐"; position: absolute; left: 0; top: 0; color: var(--accent); font-size: 1.05rem;
+  }
+  ul.check li.done::before { content: "☑"; color: var(--good); }
+  ul.check li.done { color: var(--muted); }
+  .phase {
+    border: 1px solid var(--line); border-left: 4px solid var(--accent);
+    border-radius: 8px; padding: .4rem 1.2rem 1rem; margin: 1.1rem 0;
+    background: #fbfcfe;
+  }
+  .phase h3 { margin-top: .9rem; }
+  .red { color: var(--warn); font-weight: 600; }
+  .green { color: var(--good); font-weight: 600; }
+  .yourturn {
+    border: 2px dashed var(--accent); border-radius: 10px;
+    background: var(--accent-soft); padding: 1rem 1.3rem; margin: 1.2rem 0;
+  }
+  figure { margin: 1.4rem 0; }
+  figcaption { font-size: .82rem; color: var(--muted); text-align: center; margin-top: .5rem; }
+  .small { font-size: .85rem; color: var(--muted); }
+</style>
+
+<h1>Discover <code>@@auto_increment_increment</code> at runtime</h1>
+<p class="subtitle">Stop trusting a hard-coded <code>stride</code> argument — let the MySQL Mapper discover it lazily on its first write, riding the pipeline's existing retry-forever model instead of blocking boot.</p>
+
+<div class="meta">
+  <strong>Topic:</strong> storage/mysql ID-derivation stride &nbsp;·&nbsp;
+  <strong>Date:</strong> 2026-06-22 &nbsp;·&nbsp;
+  <strong>Scope:</strong> <code>storage/mysql/mapper.go</code>, its tests, <code>README.md</code>, <code>config.go</code> doc comment<br>
+  <span class="small">Proposal only — no production or test code is written until you approve.</span>
+</div>
+
+<h2>Background</h2>
+
+<p>
+The Mapper derives every message's primary key arithmetically from a single multi-row
+<code>INSERT</code>. It reads <code>LAST_INSERT_ID()</code> for the first row, then computes the rest:
+</p>
+
+<pre><code><span class="tok-c">// storage/mysql/mapper.go:168 — assignIDs(...)</span>
+message.ID = uint64(first) + uint64(i)*<span class="tok-k">this</span>.stride</code></pre>
+
+<p>
+This is only correct when <code>stride</code> exactly matches the server's
+<code>@@auto_increment_increment</code>. Today that value is supplied by the
+<em>caller</em> as a constructor argument that silently defaults to <code>1</code>:
+</p>
+
+<pre><code><span class="tok-c">// storage/mysql/mapper.go:33</span>
+<span class="tok-k">func</span> <span class="tok-f">NewMapper</span>(handle *sql.DB, stride uint64, snapshotsTableName, messagesTableName <span class="tok-k">string</span>) *Mapper {
+    <span class="tok-k">return</span> &Mapper{
+        handle: handle,
+        stride: cmp.<span class="tok-f">Or</span>(stride, <span class="tok-s">1</span>), <span class="tok-c">// silently defaults to 1</span>
+        ...
+    }
+}
+
+<span class="tok-c">// README.md:132 and README.md:231 — callers are told to hard-code it</span>
+mapper := mysql.<span class="tok-f">NewMapper</span>(db, <span class="tok-s">1</span>, <span class="tok-s">"Snapshots"</span>, <span class="tok-s">"Messages"</span>)</code></pre>
+
+<div class="callout warn">
+  <strong>The foot-gun.</strong> If the operator deploys against a MySQL server whose
+  <code>auto_increment_increment</code> is not <code>1</code> (multi-source replication and
+  Galera/Group-Replication clusters commonly set it to <code>2</code> or higher), the hard-coded
+  <code>1</code> is silently wrong. Every derived ID after the first in a batch collides with or skips
+  real rows — corrupting the monotonic-ID invariant the whole pipeline depends on. Nothing fails loudly.
+</div>
+
+<p>
+Notably, the <em>test suite already knows the right answer</em> — it queries the server and feeds the
+result in, rather than trusting a literal (<code>mapper_test.go:45</code>):
+</p>
+
+<pre><code><span class="tok-k">func</span> (<span class="tok-k">this</span> *MapperFixture) <span class="tok-f">autoIncrementIncrement</span>() uint64 {
+    <span class="tok-k">var</span> result uint64
+    err := <span class="tok-k">this</span>.handle.<span class="tok-f">QueryRow</span>(<span class="tok-s">`SELECT @@auto_increment_increment`</span>).<span class="tok-f">Scan</span>(&result)
+    <span class="tok-k">this</span>.<span class="tok-f">So</span>(err, should.BeNil)
+    <span class="tok-k">return</span> result
+}</code></pre>
+
+<p>
+The goal is to move that one query out of the test fixture and into the production Mapper, so the value
+is discovered automatically and the error-prone constructor argument disappears.
+</p>
+
+<h2 id="why-not-startup">Why <em>not</em> at construction / boot</h2>
+
+<div class="callout warn">
+  <strong>Your concern, and it's the right one.</strong> If the Mapper performed a synchronous
+  <code>SELECT @@auto_increment_increment</code> at construction and returned an error when the DB is
+  unreachable, the service couldn't finish initializing while MySQL is down. It would fail its
+  infrastructure health/readiness check inside the allotted threshold and never reach a running state —
+  turning a <em>transient</em> database outage into a service that can't even start.
+</div>
+
+<p>
+Crucially, <strong>this dependency does not exist today.</strong> Callers build the handle with
+<code>sql.Open(...)</code>, which is <em>lazy</em> — it validates the DSN but opens no connection. So
+constructing the Mapper performs zero network I/O, and the process can boot with MySQL down. The
+pipeline's documented invariant then takes over:
+</p>
+
+<blockquote class="small" style="border-left:3px solid var(--line); margin:0 0 0 .2rem; padding-left:1rem; color:var(--muted)">
+  "persistence, broadcast, and recovery <strong>retry forever</strong> (backoff caps at 30s) until the
+  pipeline <code>ctx</code> is cancelled." — <code>CLAUDE.md</code>, pipeline invariants
+</blockquote>
+
+<p>
+A blocking startup query would <em>regress</em> that resilience. So we must discover the stride in a way
+that participates in the existing retry-forever model rather than gating boot on it.
+</p>
+
+<h2>Approach <span class="tag rec">recommended</span></h2>
+
+<p>
+Detect the stride <strong>lazily, on the Mapper's first write</strong>, and let any failure flow through
+the persistence stage's existing infinite-retry loop. Construction stays pure (no I/O, no error), so boot
+is never blocked. The <code>stride</code> parameter is removed entirely.
+</p>
+
+<ul>
+  <li>The <code>stride</code> field becomes an <code>atomic.Uint64</code>; <code>0</code> means "not yet discovered."</li>
+  <li>An <code>ensureStride(ctx)</code> guard runs at the top of the insert path: if the stride is still
+      <code>0</code>, it issues the one <code>SELECT @@auto_increment_increment</code> and caches the result.</li>
+  <li>If that query fails (DB down), <code>ensureStride</code> returns the error, the insert returns the
+      error, and the <strong>persistence stage retries with backoff — exactly as it already does for a failed
+      <code>INSERT</code>.</strong> No new retry machinery, no new failure mode.</li>
+  <li>Once cached, the stride is never re-queried; subsequent inserts read the atomic and skip straight to
+      the arithmetic.</li>
+</ul>
+
+<pre><code><span class="tok-c">// ensureStride: detect once, lazily, concurrency-safe. 0 == not yet known.</span>
+<span class="tok-k">func</span> (<span class="tok-k">this</span> *Mapper) <span class="tok-f">ensureStride</span>(ctx context.Context) <span class="tok-k">error</span> {
+    <span class="tok-k">if</span> <span class="tok-k">this</span>.stride.<span class="tok-f">Load</span>() != <span class="tok-s">0</span> {
+        <span class="tok-k">return</span> <span class="tok-k">nil</span>
+    }
+    <span class="tok-k">var</span> detected uint64
+    err := <span class="tok-k">this</span>.handle.<span class="tok-f">QueryRowContext</span>(ctx, <span class="tok-s">`SELECT @@auto_increment_increment`</span>).<span class="tok-f">Scan</span>(&detected)
+    <span class="tok-k">if</span> err != <span class="tok-k">nil</span> {
+        <span class="tok-k">return</span> err <span class="tok-c">// → insert fails → persistence retries forever (existing behavior)</span>
+    }
+    <span class="tok-k">this</span>.stride.<span class="tok-f">Store</span>(cmp.<span class="tok-f">Or</span>(detected, <span class="tok-s">1</span>)) <span class="tok-c">// guard against a pathological 0</span>
+    <span class="tok-k">return</span> <span class="tok-k">nil</span>
+}
+
+<span class="tok-c">// insertMessages calls ensureStride before opening the transaction.</span>
+<span class="tok-k">func</span> (<span class="tok-k">this</span> *Mapper) <span class="tok-f">insertMessages</span>(ctx context.Context, op *storage.InsertMessages) (err <span class="tok-k">error</span>) {
+    <span class="tok-k">if</span> len(op.Messages) == <span class="tok-s">0</span> {
+        <span class="tok-k">return</span> <span class="tok-k">nil</span>
+    }
+    <span class="tok-k">if</span> err := <span class="tok-k">this</span>.<span class="tok-f">ensureStride</span>(ctx); err != <span class="tok-k">nil</span> {
+        <span class="tok-k">return</span> err
+    }
+    <span class="tok-c">// ... existing BeginTx / insert / assignIDs path, with assignIDs reading this.stride.Load()</span>
+}</code></pre>
+
+<figure>
+<svg viewBox="0 0 820 360" width="100%" role="img" aria-label="Boot is non-blocking; stride is discovered lazily on first write and retried on failure">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#5b6675"/>
+    </marker>
+    <marker id="arrowG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#1a7f43"/>
+    </marker>
+    <marker id="arrowW" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#b54708"/>
+    </marker>
+  </defs>
+
+  <!-- Row 1: BOOT -->
+  <text x="20" y="26" font-size="13" font-weight="700" fill="#1a7f43">BOOT — never blocked on the DB</text>
+  <rect x="20" y="40" width="150" height="48" rx="7" fill="#e7f6ec" stroke="#abdcbb"/>
+  <text x="95" y="60" font-size="11.5" text-anchor="middle" fill="#1c2230">NewMapper(...)</text>
+  <text x="95" y="76" font-size="10" text-anchor="middle" fill="#5b6675">pure, no I/O</text>
+
+  <rect x="250" y="40" width="150" height="48" rx="7" fill="#e7f6ec" stroke="#abdcbb"/>
+  <text x="325" y="60" font-size="11.5" text-anchor="middle" fill="#1c2230">harness.New(...)</text>
+  <text x="325" y="76" font-size="10" text-anchor="middle" fill="#5b6675">listeners start</text>
+
+  <rect x="480" y="40" width="150" height="48" rx="7" fill="#e7f6ec" stroke="#abdcbb"/>
+  <text x="555" y="60" font-size="11.5" text-anchor="middle" fill="#1c2230">process healthy ✓</text>
+  <text x="555" y="76" font-size="10" text-anchor="middle" fill="#5b6675">DB up OR down</text>
+
+  <line x1="170" y1="64" x2="248" y2="64" stroke="#1a7f43" stroke-width="1.5" marker-end="url(#arrowG)"/>
+  <line x1="400" y1="64" x2="478" y2="64" stroke="#1a7f43" stroke-width="1.5" marker-end="url(#arrowG)"/>
+
+  <line x1="20" y1="108" x2="800" y2="108" stroke="#d9dee6" stroke-width="1" stroke-dasharray="3 4"/>
+
+  <!-- Row 2: FIRST WRITE -->
+  <text x="20" y="142" font-size="13" font-weight="700" fill="#1f6feb">FIRST WRITE — discover lazily, retry on failure</text>
+
+  <rect x="20" y="158" width="160" height="48" rx="7" fill="#e7f0ff" stroke="#b9d4ff"/>
+  <text x="100" y="178" font-size="11.5" text-anchor="middle" fill="#1c2230">persistence stage</text>
+  <text x="100" y="194" font-size="10" text-anchor="middle" fill="#5b6675">InsertMessages</text>
+
+  <rect x="250" y="158" width="160" height="48" rx="7" fill="#e7f0ff" stroke="#b9d4ff"/>
+  <text x="330" y="178" font-size="11.5" text-anchor="middle" fill="#1c2230">ensureStride(ctx)</text>
+  <text x="330" y="194" font-size="10" text-anchor="middle" fill="#5b6675">stride == 0 ?</text>
+
+  <rect x="480" y="158" width="160" height="48" rx="7" fill="#e7f0ff" stroke="#b9d4ff"/>
+  <text x="560" y="178" font-size="11.5" text-anchor="middle" fill="#1c2230">SELECT @@auto_…</text>
+  <text x="560" y="194" font-size="10" text-anchor="middle" fill="#5b6675">on MySQL</text>
+
+  <line x1="180" y1="182" x2="248" y2="182" stroke="#1f6feb" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="410" y1="182" x2="478" y2="182" stroke="#1f6feb" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- success path -->
+  <rect x="480" y="240" width="160" height="44" rx="7" fill="#e7f6ec" stroke="#abdcbb"/>
+  <text x="560" y="260" font-size="11" text-anchor="middle" fill="#1a7f43">cache stride → assignIDs</text>
+  <text x="560" y="275" font-size="10" text-anchor="middle" fill="#5b6675">never queried again</text>
+  <line x1="560" y1="206" x2="560" y2="238" stroke="#1a7f43" stroke-width="1.5" marker-end="url(#arrowG)"/>
+  <text x="600" y="226" font-size="10" fill="#1a7f43">DB up</text>
+
+  <!-- failure path -->
+  <rect x="250" y="240" width="160" height="44" rx="7" fill="#fff4e5" stroke="#f1c089"/>
+  <text x="330" y="260" font-size="11" text-anchor="middle" fill="#b54708">error → return</text>
+  <text x="330" y="275" font-size="10" text-anchor="middle" fill="#5b6675">backoff, retry forever</text>
+  <line x1="480" y1="200" x2="412" y2="240" stroke="#b54708" stroke-width="1.5" marker-end="url(#arrowW)"/>
+  <text x="430" y="224" font-size="10" fill="#b54708">DB down</text>
+  <!-- retry loop arrow back to persistence -->
+  <path d="M250,262 C150,262 100,240 100,208" fill="none" stroke="#b54708" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arrowW)"/>
+  <text x="120" y="252" font-size="10" fill="#b54708">retry</text>
+
+  <text x="20" y="330" font-size="10.5" fill="#5b6675">The failure path is the pipeline's existing persistence-retry loop — no new machinery, and boot already succeeded above.</text>
+</svg>
+<figcaption>Construction does no I/O, so boot and health checks never wait on MySQL. Detection happens on the first write and a DB outage simply defers it via the retry loop that already guards every <code>INSERT</code>.</figcaption>
+</figure>
+
+<h3>Public API change</h3>
+
+<table>
+  <tr><th>&nbsp;</th><th>Before</th><th>After</th></tr>
+  <tr>
+    <td>Signature</td>
+    <td><code>NewMapper(handle, stride, snap, msg) *Mapper</code></td>
+    <td><code>NewMapper(handle, snap, msg) *Mapper</code></td>
+  </tr>
+  <tr>
+    <td>Stride source</td>
+    <td>caller-supplied literal</td>
+    <td><code>SELECT @@auto_increment_increment</code>, lazily on first write</td>
+  </tr>
+  <tr>
+    <td>Construction I/O</td>
+    <td>none</td>
+    <td>none <span class="small">(unchanged — boot stays non-blocking)</span></td>
+  </tr>
+  <tr>
+    <td>Failure handling</td>
+    <td>silent (wrong IDs)</td>
+    <td>insert returns error → existing persistence retry-forever loop</td>
+  </tr>
+</table>
+
+<p>
+The constructor stays <strong>non-fallible and I/O-free</strong>, so the two existing tests that build with a
+<code>nil</code> <code>*sql.DB</code> (<code>mapper_assign_ids_test.go:23</code>, <code>mapper_invalid_table_test.go:28</code>)
+keep working — they just drop the stride argument. The assign-IDs test, which needs a known stride to check the
+arithmetic, sets it directly via white-box access (<code>subject.stride.Store(7)</code>), since it lives in
+<code>package mysql</code>.
+</p>
+
+<h2>Trade-offs &amp; open questions</h2>
+
+<table>
+  <tr><th>Concern</th><th>Assessment</th></tr>
+  <tr>
+    <td><strong>Detection deferred to first write, not boot.</strong></td>
+    <td>This is the point — see <a href="#why-not-startup">above</a>. The stride is only ever <em>used</em> on
+        the insert path, so detecting it there is both sufficient and the natural home for the retry. Reads
+        (recovery, dispatch-marking) never need it.</td>
+  </tr>
+  <tr>
+    <td><strong>Breaking API change.</strong></td>
+    <td>The signature drops one parameter. The only call sites are the README and the tests — blast radius is
+        tiny and entirely inside this <code>/v2</code> module.</td>
+  </tr>
+  <tr>
+    <td><strong>Mutable state on a concurrent-safe type.</strong></td>
+    <td>The Mapper is documented as safe for concurrent use. <code>atomic.Uint64</code> preserves that. In
+        practice only the single persistence goroutine inserts, but the atomic keeps the contract honest.</td>
+  </tr>
+  <tr>
+    <td><strong>Redundant query under a race.</strong></td>
+    <td>If two inserts ever observed <code>stride == 0</code> at once, both would query and both would store the
+        same value — harmless and self-correcting. Not worth a mutex.</td>
+  </tr>
+  <tr>
+    <td><strong>Defensive default retained.</strong></td>
+    <td>Keep <code>cmp.Or(detected, 1)</code> so a pathological server value of <code>0</code> can't zero out the
+        stride.</td>
+  </tr>
+  <tr>
+    <td><strong>Session vs. global scope.</strong></td>
+    <td>The bare <code>SELECT</code> reads the session value, which each pooled connection inherits from global at
+        connect time. This codebase never issues <code>SET</code> on the variable, so any pooled connection returns
+        the representative value. Worth a one-line code comment.</td>
+  </tr>
+  <tr>
+    <td><strong>Out of scope: <code>innodb_autoinc_lock_mode</code>.</strong></td>
+    <td>The <code>assignIDs</code> comment notes correctness also relies on lock mode <code>= 2</code>. <em>Open
+        question:</em> validate it here too, or leave for a follow-up? Recommendation: leave out to keep scope tight.</td>
+  </tr>
+</table>
+
+<h3>Alternatives considered</h3>
+<p>
+<span class="tag alt">Rejected</span> <strong>Fallible auto-detecting constructor</strong> —
+<code>NewMapper(ctx, handle, ...) (*Mapper, error)</code> querying at construction. Cleanest-looking API, but it
+introduces a hard startup dependency on MySQL that doesn't exist today and would fail health checks during a
+transient DB outage. This is the approach your feedback correctly rules out. <br><br>
+<span class="tag alt">Rejected</span> <strong>Sentinel override</strong> — keep the <code>stride</code> param,
+auto-detect only when <code>0</code>. Backward compatible but preserves the very argument we're trying to
+eliminate and muddles the contract. <br><br>
+<span class="tag alt">Considered</span> <strong>Detect during the recovery stage.</strong> Recovery already runs at
+startup and retries forever, but it only <em>reads</em> — coupling stride detection (a write-path concern) to it
+would be surprising, and recovery can complete without ever needing the stride. Lazy-on-write keeps the concern
+where it belongs.
+</p>
+
+<h2>Implementation checklist</h2>
+
+<div class="phase">
+  <h3>Phase 1 — Lazy, retry-friendly stride detection <span class="small">(the core)</span></h3>
+  <ul class="check">
+    <li class="done">Change the <code>stride</code> field on <code>Mapper</code> from <code>uint64</code> to <code>atomic.Uint64</code> (<code>0</code> = not yet detected).</li>
+    <li class="done">Drop the <code>stride</code> parameter from <code>NewMapper(handle, snap, msg) *Mapper</code>; no longer set stride in the constructor.</li>
+    <li class="done">Add <code>ensureStride(ctx)</code>: returns nil if the atomic is already set; otherwise runs <code>SELECT @@auto_increment_increment</code> via <code>QueryRowContext</code> and stores <code>cmp.Or(detected, 1)</code>; returns the query error on failure. Add the session/global-scope comment.</li>
+    <li class="done">Call <code>ensureStride(ctx)</code> at the top of <code>insertMessages</code> (before <code>BeginTx</code>), returning early on error.</li>
+    <li class="done">Update <code>assignIDs</code> to read <code>this.stride.Load()</code>.</li>
+    <li class="done"><span class="red">Red:</span> add a DB-backed fixture test that a fresh Mapper has <code>stride == 0</code> before any write, and after the first insert its stride equals the server's <code>@@auto_increment_increment</code> and IDs are derived correctly.</li>
+    <li class="done"><span class="red">Red:</span> add a test that <code>ensureStride</code> surfaces an error when the query can't run (e.g. against a closed handle), confirming the insert returns the error rather than panicking — so the persistence stage can retry.</li>
+    <li class="done">Repoint the offline tests: <code>mapper_assign_ids_test.go</code> sets <code>stride</code> via <code>.Store(...)</code> (white-box) and drops the constructor arg; <code>mapper_invalid_table_test.go</code> drops the stride arg. <em>(Also removed <code>TestZeroStrideDefaultsToOne</code>: the constructor-level default it covered relocated to <code>ensureStride</code> and a 0 stride is no longer reachable via the API.)</em></li>
+    <li class="done"><span class="green">Green:</span> <code>make test</code> passes offline; <code>make test.db</code> passes the new DB-backed tests.</li>
+  </ul>
+</div>
+
+<div class="phase">
+  <h3>Phase 2 — Flip the remaining call sites &amp; docs</h3>
+  <ul class="check">
+    <li class="done">Update <code>MapperFixture.Setup</code> (<code>mapper_test.go</code>) to call <code>NewMapper(handle, "Snapshots", "Messages")</code>. Keep the <code>autoIncrementIncrement()</code> helper and <code>this.stride</code> — tests still use them to compute <em>expected</em> IDs for assertions. <em>(Done before the Phase&nbsp;1 green run — same-package compilation coupling.)</em></li>
+    <li class="done">Update the other DB-backed call sites that pass <code>this.stride</code> (<code>mapper_insert_test.go:60,80,97,166</code>, <code>mapper_snapshots_test.go:51</code>) to drop the argument.</li>
+    <li class="done">Update both <code>README.md</code> examples (lines 132, 231) to drop the <code>1</code>.</li>
+    <li class="done">Refresh the <code>config.go</code> doc comment (line ~111) referencing <code>NewMapper</code>. <em>(No change needed — it already references <code>NewMapper(...)</code> generically, without the stride argument, so it remains accurate.)</em></li>
+    <li class="done"><span class="green">Green:</span> <code>make build</code> and <code>make test.db</code> both pass.</li>
+  </ul>
+</div>
+
+<h2>Definition of done</h2>
+<ul class="check">
+  <li>No production or test code passes a literal stride to construct the Mapper.</li>
+  <li>Constructing the Mapper performs no DB I/O; the service still boots and reports healthy while MySQL is down.</li>
+  <li>A DB outage during stride detection is absorbed by the existing persistence retry-forever loop, not a new failure mode.</li>
+  <li>Offline unit tests still run with a <code>nil</code> handle.</li>
+  <li><code>make build</code> + <code>make test.db</code> green; README and <code>config.go</code> comment updated.</li>
+</ul>

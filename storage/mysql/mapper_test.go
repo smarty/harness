@@ -38,8 +38,8 @@ func (this *MapperFixture) Setup() {
 	this.So(err, should.BeNil)
 	_, err = handle.Exec(`TRUNCATE TABLE Snapshots;`)
 	this.So(err, should.BeNil)
-	this.stride = this.autoIncrementIncrement()
-	this.subject = NewMapper(handle, this.stride, "Snapshots", "Messages")
+	this.stride = this.autoIncrementIncrement() // retained so tests can compute expected strided IDs
+	this.subject = NewMapper(handle)
 }
 
 func (this *MapperFixture) autoIncrementIncrement() uint64 {
