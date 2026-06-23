@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 )
 
 // ErrInvalidConfiguration wraps every configuration-validation failure
@@ -69,9 +70,12 @@ type (
 	// Decorator transforms the message value a domain handler produced, before
 	// it is serialized. It receives the context that accompanied the
 	// originating command at the entrypoint, so request-scoped data can be
-	// applied per message. The pipeline invokes Decorate once per message, over
-	// exactly the values that batch produced, from the single execution
-	// goroutine — so implementations need not be safe for concurrent use.
+	// applied per message. It also receives now, a single timestamp captured
+	// once per batch and shared by every message that batch produced, so all
+	// events from one unit of work carry a consistent time. The pipeline
+	// invokes Decorate once per message, over exactly the values that batch
+	// produced, from the single execution goroutine — so implementations need
+	// not be safe for concurrent use.
 	//
 	// Implementations MUST return a value of the SAME concrete Go type:
 	// each message's registered Type name is derived from the original value
@@ -82,7 +86,7 @@ type (
 	// Consumer and replay paths (MQ consume, cron) pass a context without
 	// request-scoped data; such a Decorator simply finds nothing to apply.
 	Decorator interface {
-		Decorate(ctx context.Context, message any) any
+		Decorate(ctx context.Context, now time.Time, message any) any
 	}
 )
 

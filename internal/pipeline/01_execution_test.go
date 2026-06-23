@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/better"
@@ -20,6 +21,7 @@ func TestExecutionFixture(t *testing.T) {
 
 type ExecutionFixture struct {
 	*gunit.Fixture
+	now       time.Time
 	input     chan *batch
 	output    chan *unitOfWork
 	typeNames map[reflect.Type]string
@@ -32,6 +34,7 @@ type ExecutionFixture struct {
 	tracked []any
 }
 
+func (this *ExecutionFixture) Now() time.Time { return this.now }
 func (this *ExecutionFixture) getUnit() *unitOfWork {
 	return new(unitOfWork)
 }
@@ -51,7 +54,7 @@ func (this *ExecutionFixture) Setup() {
 	this.typeNames = map[reflect.Type]string{
 		reflect.TypeOf(""): "app:basic-string",
 	}
-	this.subject = newExecution(this, 64, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this, this)
+	this.subject = newExecution(this, this.Now, 64, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this, this)
 }
 
 func (this *ExecutionFixture) Execute(message any, broadcast func(...any)) {
@@ -72,7 +75,7 @@ func (this *ExecutionFixture) Track(observation any) {
 
 // Decorate is the fixture's default passthrough Decorator for tests that don't
 // exercise decoration; tests that do supply their own (e.g. decoratorSpy).
-func (this *ExecutionFixture) Decorate(_ context.Context, message any) any {
+func (this *ExecutionFixture) Decorate(_ context.Context, _ time.Time, message any) any {
 	return message
 }
 
@@ -110,7 +113,7 @@ func (this *ExecutionFixture) TestUnitFlushesWhenMaxUnitSizeReached() {
 	this.input <- &batch{instructions: []any{"m3"}, complete: func(bool) {}}
 	close(this.input)
 
-	this.subject = newExecution(this, 2, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this, this)
+	this.subject = newExecution(this, this.Now, 2, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this, this)
 	go this.subject.Listen()
 
 	units := this.drain()
@@ -188,7 +191,7 @@ func (this *ExecutionFixture) TestExecutorBroadcastsMultipleResults() {
 
 func (this *ExecutionFixture) TestPerBatchDecorationUsesEachBatchContext() {
 	spy := &decoratorSpy{}
-	this.subject = newExecution(this, 64, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this, spy)
+	this.subject = newExecution(this, this.Now, 64, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this, spy)
 
 	ctxA := context.WithValue(this.Context(), spyKey{}, "A")
 	ctxB := context.WithValue(this.Context(), spyKey{}, "B")
@@ -247,7 +250,7 @@ type spyCall struct {
 	value any
 }
 
-func (this *decoratorSpy) Decorate(ctx context.Context, message any) any {
+func (this *decoratorSpy) Decorate(ctx context.Context, _ time.Time, message any) any {
 	this.calls = append(this.calls, spyCall{ctx: ctx, value: message})
 	return decoratedValue{ctx: ctx, original: message}
 }

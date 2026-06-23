@@ -49,6 +49,7 @@ func (this *ShutdownUnwedgeFixture) Setup() {
 	var err error
 	this.pipeline, err = Build(this.Context(), Configuration{
 		Monitor:                this,
+		Clock:                  time.Now,
 		Storage:                this,
 		Serializer:             this,
 		Dispatcher:             this,
@@ -81,7 +82,7 @@ func (this *ShutdownUnwedgeFixture) ContentType() string { return "" }
 func (this *ShutdownUnwedgeFixture) Dispatch(context.Context, ...*contracts.Message) error {
 	return nil
 }
-func (this *ShutdownUnwedgeFixture) Decorate(ctx context.Context, message any) any {
+func (this *ShutdownUnwedgeFixture) Decorate(_ context.Context, _ time.Time, message any) any {
 	return message
 }
 

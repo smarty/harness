@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"time"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/storage"
@@ -12,6 +13,7 @@ import (
 
 type Configuration struct {
 	Monitor                contracts.Monitor
+	Clock                  func() time.Time
 	Storage                storage.Storage
 	Serializer             contracts.Serializer
 	Dispatcher             contracts.Dispatcher

@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/better"
@@ -46,6 +47,7 @@ func (this *AbandonmentFixture) Setup() {
 	var err error
 	this.pipeline, err = Build(ctx, Configuration{
 		Monitor:                this,
+		Clock:                  time.Now,
 		Storage:                this,
 		Serializer:             this,
 		Dispatcher:             this,
@@ -93,7 +95,7 @@ func (this *AbandonmentFixture) Dispatch(context.Context, ...*contracts.Message)
 	return nil
 }
 
-func (this *AbandonmentFixture) Decorate(ctx context.Context, message any) any {
+func (this *AbandonmentFixture) Decorate(_ context.Context, _ time.Time, message any) any {
 	return message
 }
 

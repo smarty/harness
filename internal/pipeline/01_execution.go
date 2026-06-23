@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"reflect"
+	"time"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/generic"
@@ -10,6 +11,7 @@ import (
 
 type execution struct {
 	monitor     contracts.Monitor
+	now         func() time.Time
 	maxUnitSize int
 	newUnit     func() *unitOfWork
 	newMessage  func() *contracts.Message
@@ -22,6 +24,7 @@ type execution struct {
 
 func newExecution(
 	monitor contracts.Monitor,
+	now func() time.Time,
 	maxUnitSize int,
 	newUnit func() *unitOfWork,
 	newMessage func() *contracts.Message,
@@ -33,6 +36,7 @@ func newExecution(
 ) *execution {
 	return &execution{
 		monitor:     monitor,
+		now:         now,
 		maxUnitSize: maxUnitSize,
 		newUnit:     newUnit,
 		newMessage:  newMessage,
@@ -81,14 +85,16 @@ func (this *execution) Listen() {
 // applyDecorator hands each of the batch's produced values to the Decorator and
 // writes the returned replacement back onto its message. It runs per-batch over
 // exactly the slice that batch produced, so each value is decorated with its own
-// context. Per the Decorator contract the replacement must keep the same concrete
-// Go type, since each message's Type name was derived from the original value
-// before decoration runs.
+// context. A single timestamp is captured once for the batch and passed to every
+// message it produced, so they all carry a consistent time. Per the Decorator
+// contract the replacement must keep the same concrete Go type, since each
+// message's Type name was derived from the original value before decoration runs.
 func (this *execution) applyDecorator(ctx context.Context, produced []*contracts.Message) {
 	if len(produced) == 0 {
 		return
 	}
+	now := this.now()
 	for _, message := range produced {
-		message.Value = this.decorator.Decorate(ctx, message.Value)
+		message.Value = this.decorator.Decorate(ctx, now, message.Value)
 	}
 }

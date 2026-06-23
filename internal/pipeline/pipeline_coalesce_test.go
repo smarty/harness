@@ -5,6 +5,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/better"
@@ -60,6 +61,7 @@ func (this *CoalesceFixture) Setup() {
 	var err error
 	this.pipeline, err = Build(this.Context(), Configuration{
 		Monitor:                this,
+		Clock:                  time.Now,
 		Storage:                this,
 		Serializer:             this,
 		Dispatcher:             this,
@@ -114,7 +116,7 @@ func (this *CoalesceFixture) Dispatch(_ context.Context, messages ...*contracts.
 	}
 	return nil
 }
-func (this *CoalesceFixture) Decorate(ctx context.Context, message any) any {
+func (this *CoalesceFixture) Decorate(_ context.Context, _ time.Time, message any) any {
 	return message
 }
 

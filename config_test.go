@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
@@ -130,6 +131,6 @@ func (this *recordingMonitor) Track(observation any) {
 
 type recordingDecorator struct{}
 
-func (this *recordingDecorator) Decorate(_ context.Context, message any) any {
+func (this *recordingDecorator) Decorate(_ context.Context, _ time.Time, message any) any {
 	return message
 }

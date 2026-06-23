@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/better"
@@ -54,7 +55,9 @@ func (this *PoolHygieneFixture) Track(any)                                      
 func (this *PoolHygieneFixture) Serialize(io.Writer, any) error                        { return nil }
 func (this *PoolHygieneFixture) ContentType() string                                   { return "" }
 func (this *PoolHygieneFixture) Dispatch(context.Context, ...*contracts.Message) error { return nil }
-func (this *PoolHygieneFixture) Decorate(ctx context.Context, message any) any         { return message }
+func (this *PoolHygieneFixture) Decorate(_ context.Context, _ time.Time, message any) any {
+	return message
+}
 
 func (this *PoolHygieneFixture) TestRecycledMessagesCarryTheTypeOfTheirCurrentValue() {
 	ctx, cancel := context.WithCancel(this.Context())
@@ -62,6 +65,7 @@ func (this *PoolHygieneFixture) TestRecycledMessagesCarryTheTypeOfTheirCurrentVa
 
 	subject, err := Build(ctx, Configuration{
 		Monitor:    this,
+		Clock:      time.Now,
 		Storage:    this,
 		Serializer: this,
 		Dispatcher: this,
