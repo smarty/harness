@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"reflect"
 
 	"github.com/smarty/harness/v2/contracts"
@@ -16,6 +17,8 @@ type execution struct {
 	input       chan *batch
 	output      chan *unitOfWork
 	executor    executor
+	decorator   contracts.Decorator
+	values      []any // reusable per-batch scratch buffer for the decorator.
 }
 
 func newExecution(
@@ -27,6 +30,7 @@ func newExecution(
 	input chan *batch,
 	output chan *unitOfWork,
 	exec executor,
+	decorator contracts.Decorator,
 ) *execution {
 	return &execution{
 		monitor:     monitor,
@@ -37,6 +41,7 @@ func newExecution(
 		input:       input,
 		output:      output,
 		executor:    exec,
+		decorator:   decorator,
 	}
 }
 
@@ -51,6 +56,7 @@ func (this *execution) Listen() {
 			unit.completions = generic.Reclaim(unit.completions, this.maxUnitSize)
 		}
 		unit.completions = append(unit.completions, batch.complete)
+		start := len(unit.results)
 		for _, instruction := range batch.instructions {
 			this.executor.Execute(instruction, func(outgoing ...any) {
 				for _, result := range outgoing {
@@ -64,10 +70,33 @@ func (this *execution) Listen() {
 				}
 			})
 		}
+		this.applyDecorator(batch.ctx, unit.results[start:])
 		if len(unit.completions) < this.maxUnitSize && len(this.input) > 0 {
 			continue // more to do
 		}
 		this.output <- unit
 		unit = nil
+	}
+}
+
+// applyDecorator hands the batch's produced values to the Decorator and writes
+// any replacements back onto their messages. It runs per-batch over exactly the
+// slice that batch produced, so each value is decorated with its own context. A
+// decorator that returns a slice of a different length is ignored (the messages
+// are left intact) — write-back only happens when the contract is honored.
+func (this *execution) applyDecorator(ctx context.Context, produced []*contracts.Message) {
+	if len(produced) == 0 {
+		return
+	}
+	this.values = this.values[:0]
+	for _, message := range produced {
+		this.values = append(this.values, message.Value)
+	}
+	this.values = this.decorator.Decorate(ctx, this.values)
+	if len(this.values) != len(produced) {
+		return
+	}
+	for i := range produced {
+		produced[i].Value = this.values[i]
 	}
 }

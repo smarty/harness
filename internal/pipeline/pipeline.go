@@ -40,7 +40,7 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 			newRecovery(ctx, adapters.NewRecovery(config.Storage), recoveryBatchSize, work4a, wait, config.Monitor),
 			entry,
 			newExecution(config.Monitor, config.ExecutionUnitSize, unitPool.Get, messagePool.Get,
-				config.MessageTypes, batches, work1, newRouter(config.DomainTypes...)),
+				config.MessageTypes, batches, work1, newRouter(config.DomainTypes...), config.Decorator),
 			newSerialization(config.Monitor, config.Serializer, work1, work2),
 			newPersistence(ctx, config.Monitor, work2, work3, adapters.NewWriter(config.Storage), wait),
 			newCompletion(work3, work4b),

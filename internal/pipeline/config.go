@@ -15,6 +15,7 @@ type Configuration struct {
 	Storage                storage.Storage
 	Serializer             contracts.Serializer
 	Dispatcher             contracts.Dispatcher
+	Decorator              contracts.Decorator
 	MessageTypes           map[reflect.Type]string
 	DomainTypes            []any
 	BurstCapacity          int

@@ -66,6 +66,24 @@ type (
 	Monitor interface {
 		Track(observation any)
 	}
+	// Decorator transforms the message values a domain handler produced, before
+	// they are serialized. It receives the context that accompanied the
+	// originating command at the entrypoint, so request-scoped data can be
+	// applied per message. The pipeline invokes Decorate once per batch, over
+	// exactly the values that batch produced, from the single execution
+	// goroutine — so implementations need not be safe for concurrent use.
+	//
+	// Implementations MUST return a slice of the same length, each element
+	// either the original value or a replacement of the SAME concrete Go type:
+	// the pipeline has already derived each message's registered Type name from
+	// the pre-decoration value. A returned slice of a different length is
+	// ignored. The default no-op Decorator returns messages unchanged.
+	//
+	// Consumer and replay paths (MQ consume, cron) pass a context without
+	// request-scoped data; such a Decorator simply finds nothing to apply.
+	Decorator interface {
+		Decorate(ctx context.Context, messages []any) []any
+	}
 )
 
 // Message represents a record to be saved or loaded to/from the Messages database table.

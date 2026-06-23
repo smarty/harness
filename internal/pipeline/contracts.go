@@ -67,6 +67,7 @@ type (
 // Unexported value types shared across pipeline stages.
 type (
 	batch struct {
+		ctx          context.Context
 		instructions []any
 		complete     func(stored bool)
 	}

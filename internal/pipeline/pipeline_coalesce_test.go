@@ -63,6 +63,7 @@ func (this *CoalesceFixture) Setup() {
 		Storage:                this,
 		Serializer:             this,
 		Dispatcher:             this,
+		Decorator:              this,
 		DomainTypes:            []any{this},
 		BurstCapacity:          coalesceCallers, // every caller enqueues without blocking.
 		PipelineBufferCapacity: 4,
@@ -112,6 +113,9 @@ func (this *CoalesceFixture) Dispatch(_ context.Context, messages ...*contracts.
 		this.dispatched = append(this.dispatched, message.Value)
 	}
 	return nil
+}
+func (this *CoalesceFixture) Decorate(ctx context.Context, messages []any) []any {
+	return messages
 }
 
 func (this *CoalesceFixture) Track(observation any) {

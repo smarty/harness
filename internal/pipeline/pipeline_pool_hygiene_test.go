@@ -54,6 +54,7 @@ func (this *PoolHygieneFixture) Track(any)                                      
 func (this *PoolHygieneFixture) Serialize(io.Writer, any) error                        { return nil }
 func (this *PoolHygieneFixture) ContentType() string                                   { return "" }
 func (this *PoolHygieneFixture) Dispatch(context.Context, ...*contracts.Message) error { return nil }
+func (this *PoolHygieneFixture) Decorate(ctx context.Context, messages []any) []any    { return messages }
 
 func (this *PoolHygieneFixture) TestRecycledMessagesCarryTheTypeOfTheirCurrentValue() {
 	ctx, cancel := context.WithCancel(this.Context())
@@ -64,6 +65,7 @@ func (this *PoolHygieneFixture) TestRecycledMessagesCarryTheTypeOfTheirCurrentVa
 		Storage:    this,
 		Serializer: this,
 		Dispatcher: this,
+		Decorator:  this,
 		MessageTypes: map[reflect.Type]string{
 			reflect.TypeOf(poolEventA{}): "pool-hygiene:event-a",
 			reflect.TypeOf(poolEventB{}): "pool-hygiene:event-b",
@@ -106,6 +108,24 @@ func (this *PoolHygieneFixture) TestRecycledMessagesCarryTheTypeOfTheirCurrentVa
 			this.Fatalf("message %d: got Type=%q, want %q (stale pooled Type?)", i, typeName, expected)
 		}
 	}
+}
+
+// TestRecycledBatchCarriesNoStaleContext guards against a recycled *batch
+// pinning a prior request's context (and the request-scoped values it
+// references) after the work it accompanied has completed.
+func (this *PoolHygieneFixture) TestRecycledBatchCarriesNoStaleContext() {
+	work := make(chan *batch, 1)
+	subject := newEntrypoint(this, work, 0.80)
+
+	ctx := context.WithValue(this.Context(), poolEventA{}, "request-scoped")
+	go subject.Handle(ctx, "msg")
+
+	item := <-work
+	this.So(item.ctx, should.Equal, ctx)
+	item.complete(true) // returns the batch to the pool
+
+	recycled := subject.batches.Get()
+	this.So(recycled.ctx, should.BeNil)
 }
 
 type (

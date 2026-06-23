@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"bytes"
+	"context"
 	"reflect"
 	"slices"
 	"sync"
@@ -50,7 +51,7 @@ func (this *ExecutionFixture) Setup() {
 	this.typeNames = map[reflect.Type]string{
 		reflect.TypeOf(""): "app:basic-string",
 	}
-	this.subject = newExecution(this, 64, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this)
+	this.subject = newExecution(this, 64, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this, this)
 }
 
 func (this *ExecutionFixture) Execute(message any, broadcast func(...any)) {
@@ -67,6 +68,12 @@ func (this *ExecutionFixture) Execute(message any, broadcast func(...any)) {
 
 func (this *ExecutionFixture) Track(observation any) {
 	this.tracked = append(this.tracked, observation)
+}
+
+// Decorate is the fixture's default passthrough Decorator for tests that don't
+// exercise decoration; tests that do supply their own (e.g. decoratorSpy).
+func (this *ExecutionFixture) Decorate(_ context.Context, messages []any) []any {
+	return messages
 }
 
 func (this *ExecutionFixture) drain() (results []*unitOfWork) {
@@ -103,7 +110,7 @@ func (this *ExecutionFixture) TestUnitFlushesWhenMaxUnitSizeReached() {
 	this.input <- &batch{instructions: []any{"m3"}, complete: func(bool) {}}
 	close(this.input)
 
-	this.subject = newExecution(this, 2, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this)
+	this.subject = newExecution(this, 2, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this, this)
 	go this.subject.Listen()
 
 	units := this.drain()
@@ -179,6 +186,56 @@ func (this *ExecutionFixture) TestExecutorBroadcastsMultipleResults() {
 	this.So(units[0].results[2].Value, should.Equal, "r3")
 }
 
+func (this *ExecutionFixture) TestPerBatchDecorationUsesEachBatchContext() {
+	spy := &decoratorSpy{}
+	this.subject = newExecution(this, 64, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this, spy)
+
+	ctxA := context.WithValue(this.Context(), spyKey{}, "A")
+	ctxB := context.WithValue(this.Context(), spyKey{}, "B")
+
+	this.executeOutputs = [][]any{{"a0", "a1"}, {"b0"}}
+	this.input <- &batch{ctx: ctxA, instructions: []any{"cmdA"}, complete: func(bool) {}}
+	this.input <- &batch{ctx: ctxB, instructions: []any{"cmdB"}, complete: func(bool) {}}
+	close(this.input)
+
+	go this.subject.Listen()
+
+	units := this.drain()
+	this.So(len(units), better.Equal, 1) // both batches coalesce into one unit
+	results := units[0].results
+	this.So(len(results), better.Equal, 3)
+
+	// (1) each value decorated with ITS OWN batch's ctx, (2) replacements wrote
+	// back to Message.Value, (3) ordering preserved.
+	this.So(results[0].Value, should.Equal, decoratedValue{ctx: ctxA, original: "a0"})
+	this.So(results[1].Value, should.Equal, decoratedValue{ctx: ctxA, original: "a1"})
+	this.So(results[2].Value, should.Equal, decoratedValue{ctx: ctxB, original: "b0"})
+
+	// decoration ran once per batch, over exactly that batch's produced values.
+	this.So(len(spy.calls), should.Equal, 2)
+	this.So(spy.calls[0].ctx, should.Equal, ctxA)
+	this.So(spy.calls[0].values, should.Equal, []any{"a0", "a1"})
+	this.So(spy.calls[1].ctx, should.Equal, ctxB)
+	this.So(spy.calls[1].values, should.Equal, []any{"b0"})
+}
+
+func (this *ExecutionFixture) TestDecoratorWrongLengthLeavesValuesIntact() {
+	this.subject = newExecution(this, 64, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this, truncatingDecorator{})
+
+	this.executeOutputs = [][]any{{"a0", "a1"}}
+	this.input <- &batch{ctx: this.Context(), instructions: []any{"cmd"}, complete: func(bool) {}}
+	close(this.input)
+
+	go this.subject.Listen()
+
+	units := this.drain()
+	this.So(len(units), better.Equal, 1)
+	results := units[0].results
+	this.So(len(results), better.Equal, 2)
+	this.So(results[0].Value, should.Equal, "a0") // untouched: write-back skipped on length mismatch
+	this.So(results[1].Value, should.Equal, "a1")
+}
+
 func (this *ExecutionFixture) TestClosedInputClosesOutput() {
 	close(this.input)
 	go this.subject.Listen()
@@ -186,4 +243,36 @@ func (this *ExecutionFixture) TestClosedInputClosesOutput() {
 	_, open := <-this.output
 	this.So(open, should.BeFalse)
 	this.So(this.tracked, should.BeEmpty)
+}
+
+type spyKey struct{}
+
+// decoratedValue is the replacement value the spy writes back, capturing which
+// ctx decorated which original value so the test can assert per-batch wiring.
+type decoratedValue struct {
+	ctx      context.Context
+	original any
+}
+
+type decoratorSpy struct {
+	calls []spyCall
+}
+type spyCall struct {
+	ctx    context.Context
+	values []any
+}
+
+func (this *decoratorSpy) Decorate(ctx context.Context, messages []any) (results []any) {
+	this.calls = append(this.calls, spyCall{ctx: ctx, values: slices.Clone(messages)})
+	for _, message := range messages {
+		results = append(results, decoratedValue{ctx: ctx, original: message})
+	}
+	return results
+}
+
+// truncatingDecorator violates the same-length contract to exercise the guard.
+type truncatingDecorator struct{}
+
+func (truncatingDecorator) Decorate(_ context.Context, messages []any) []any {
+	return messages[:len(messages)-1]
 }

@@ -52,6 +52,7 @@ func (this *ShutdownUnwedgeFixture) Setup() {
 		Storage:                this,
 		Serializer:             this,
 		Dispatcher:             this,
+		Decorator:              this,
 		DomainTypes:            []any{this},
 		BurstCapacity:          1, // tiny entrypoint channel: effective capacity 2 once wedged.
 		PipelineBufferCapacity: 1,
@@ -79,6 +80,9 @@ func (this *ShutdownUnwedgeFixture) Serialize(out io.Writer, _ any) error {
 func (this *ShutdownUnwedgeFixture) ContentType() string { return "" }
 func (this *ShutdownUnwedgeFixture) Dispatch(context.Context, ...*contracts.Message) error {
 	return nil
+}
+func (this *ShutdownUnwedgeFixture) Decorate(ctx context.Context, messages []any) []any {
+	return messages
 }
 
 // Execute stands in for the contracts.Storage: it assigns ids on insert so the two

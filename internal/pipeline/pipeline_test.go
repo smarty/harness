@@ -49,6 +49,7 @@ func (this *PipelineFixture) Setup() {
 		Storage:                this,
 		Serializer:             this,
 		Dispatcher:             this,
+		Decorator:              this,
 		DomainTypes:            []any{this},
 		BurstCapacity:          1024,
 		PipelineBufferCapacity: 4,
@@ -60,6 +61,10 @@ func (this *PipelineFixture) Setup() {
 	for _, listener := range this.pipeline.Listeners {
 		this.waiter.Go(listener.Listen)
 	}
+}
+
+func (this *PipelineFixture) Decorate(ctx context.Context, messages []any) []any {
+	return messages
 }
 
 // ExecuteCommand is picked up by scan() as the Execute-prefixed method driving

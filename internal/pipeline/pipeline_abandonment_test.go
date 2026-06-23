@@ -36,6 +36,10 @@ type AbandonmentFixture struct {
 	dispatchCalls int
 }
 
+func (this *AbandonmentFixture) Decorate(ctx context.Context, messages []any) []any {
+	return messages
+}
+
 type abandonedCommand string
 
 func (this *AbandonmentFixture) Setup() {
@@ -49,6 +53,7 @@ func (this *AbandonmentFixture) Setup() {
 		Storage:                this,
 		Serializer:             this,
 		Dispatcher:             this,
+		Decorator:              this,
 		DomainTypes:            []any{this},
 		BurstCapacity:          1024,
 		PipelineBufferCapacity: 4,
