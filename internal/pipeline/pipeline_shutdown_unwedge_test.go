@@ -81,8 +81,8 @@ func (this *ShutdownUnwedgeFixture) ContentType() string { return "" }
 func (this *ShutdownUnwedgeFixture) Dispatch(context.Context, ...*contracts.Message) error {
 	return nil
 }
-func (this *ShutdownUnwedgeFixture) Decorate(ctx context.Context, messages []any) []any {
-	return messages
+func (this *ShutdownUnwedgeFixture) Decorate(ctx context.Context, message any) any {
+	return message
 }
 
 // Execute stands in for the contracts.Storage: it assigns ids on insert so the two

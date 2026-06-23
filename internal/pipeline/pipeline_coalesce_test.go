@@ -114,8 +114,8 @@ func (this *CoalesceFixture) Dispatch(_ context.Context, messages ...*contracts.
 	}
 	return nil
 }
-func (this *CoalesceFixture) Decorate(ctx context.Context, messages []any) []any {
-	return messages
+func (this *CoalesceFixture) Decorate(ctx context.Context, message any) any {
+	return message
 }
 
 func (this *CoalesceFixture) Track(observation any) {

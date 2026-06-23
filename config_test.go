@@ -130,6 +130,6 @@ func (this *recordingMonitor) Track(observation any) {
 
 type recordingDecorator struct{}
 
-func (this *recordingDecorator) Decorate(_ context.Context, messages []any) []any {
-	return messages
+func (this *recordingDecorator) Decorate(_ context.Context, message any) any {
+	return message
 }

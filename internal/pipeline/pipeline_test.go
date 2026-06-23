@@ -63,8 +63,8 @@ func (this *PipelineFixture) Setup() {
 	}
 }
 
-func (this *PipelineFixture) Decorate(ctx context.Context, messages []any) []any {
-	return messages
+func (this *PipelineFixture) Decorate(ctx context.Context, message any) any {
+	return message
 }
 
 // ExecuteCommand is picked up by scan() as the Execute-prefixed method driving

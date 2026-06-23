@@ -72,8 +72,8 @@ func (this *ExecutionFixture) Track(observation any) {
 
 // Decorate is the fixture's default passthrough Decorator for tests that don't
 // exercise decoration; tests that do supply their own (e.g. decoratorSpy).
-func (this *ExecutionFixture) Decorate(_ context.Context, messages []any) []any {
-	return messages
+func (this *ExecutionFixture) Decorate(_ context.Context, message any) any {
+	return message
 }
 
 func (this *ExecutionFixture) drain() (results []*unitOfWork) {
@@ -212,28 +212,13 @@ func (this *ExecutionFixture) TestPerBatchDecorationUsesEachBatchContext() {
 	this.So(results[2].Value, should.Equal, decoratedValue{ctx: ctxB, original: "b0"})
 
 	// decoration ran once per batch, over exactly that batch's produced values.
-	this.So(len(spy.calls), should.Equal, 2)
+	this.So(len(spy.calls), should.Equal, 3)
 	this.So(spy.calls[0].ctx, should.Equal, ctxA)
-	this.So(spy.calls[0].values, should.Equal, []any{"a0", "a1"})
-	this.So(spy.calls[1].ctx, should.Equal, ctxB)
-	this.So(spy.calls[1].values, should.Equal, []any{"b0"})
-}
-
-func (this *ExecutionFixture) TestDecoratorWrongLengthLeavesValuesIntact() {
-	this.subject = newExecution(this, 64, this.getUnit, this.getMessage, this.typeNames, this.input, this.output, this, truncatingDecorator{})
-
-	this.executeOutputs = [][]any{{"a0", "a1"}}
-	this.input <- &batch{ctx: this.Context(), instructions: []any{"cmd"}, complete: func(bool) {}}
-	close(this.input)
-
-	go this.subject.Listen()
-
-	units := this.drain()
-	this.So(len(units), better.Equal, 1)
-	results := units[0].results
-	this.So(len(results), better.Equal, 2)
-	this.So(results[0].Value, should.Equal, "a0") // untouched: write-back skipped on length mismatch
-	this.So(results[1].Value, should.Equal, "a1")
+	this.So(spy.calls[0].value, should.Equal, "a0")
+	this.So(spy.calls[1].ctx, should.Equal, ctxA)
+	this.So(spy.calls[1].value, should.Equal, "a1")
+	this.So(spy.calls[2].ctx, should.Equal, ctxB)
+	this.So(spy.calls[2].value, should.Equal, "b0")
 }
 
 func (this *ExecutionFixture) TestClosedInputClosesOutput() {
@@ -258,21 +243,11 @@ type decoratorSpy struct {
 	calls []spyCall
 }
 type spyCall struct {
-	ctx    context.Context
-	values []any
+	ctx   context.Context
+	value any
 }
 
-func (this *decoratorSpy) Decorate(ctx context.Context, messages []any) (results []any) {
-	this.calls = append(this.calls, spyCall{ctx: ctx, values: slices.Clone(messages)})
-	for _, message := range messages {
-		results = append(results, decoratedValue{ctx: ctx, original: message})
-	}
-	return results
-}
-
-// truncatingDecorator violates the same-length contract to exercise the guard.
-type truncatingDecorator struct{}
-
-func (truncatingDecorator) Decorate(_ context.Context, messages []any) []any {
-	return messages[:len(messages)-1]
+func (this *decoratorSpy) Decorate(ctx context.Context, message any) any {
+	this.calls = append(this.calls, spyCall{ctx: ctx, value: message})
+	return decoratedValue{ctx: ctx, original: message}
 }

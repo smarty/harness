@@ -195,4 +195,4 @@ func (nop) Serialize(io.Writer, any) error                        { return nil }
 func (nop) ContentType() string                                   { return "" }
 func (nop) Dispatch(context.Context, ...*contracts.Message) error { return nil }
 func (nop) Exec(context.Context, any) error                       { return nil }
-func (nop) Decorate(_ context.Context, messages []any) []any      { return messages }
+func (nop) Decorate(_ context.Context, message any) any           { return message }

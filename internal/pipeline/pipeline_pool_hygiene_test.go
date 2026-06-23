@@ -54,7 +54,7 @@ func (this *PoolHygieneFixture) Track(any)                                      
 func (this *PoolHygieneFixture) Serialize(io.Writer, any) error                        { return nil }
 func (this *PoolHygieneFixture) ContentType() string                                   { return "" }
 func (this *PoolHygieneFixture) Dispatch(context.Context, ...*contracts.Message) error { return nil }
-func (this *PoolHygieneFixture) Decorate(ctx context.Context, messages []any) []any    { return messages }
+func (this *PoolHygieneFixture) Decorate(ctx context.Context, message any) any         { return message }
 
 func (this *PoolHygieneFixture) TestRecycledMessagesCarryTheTypeOfTheirCurrentValue() {
 	ctx, cancel := context.WithCancel(this.Context())

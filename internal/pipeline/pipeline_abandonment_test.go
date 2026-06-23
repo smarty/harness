@@ -36,10 +36,6 @@ type AbandonmentFixture struct {
 	dispatchCalls int
 }
 
-func (this *AbandonmentFixture) Decorate(ctx context.Context, messages []any) []any {
-	return messages
-}
-
 type abandonedCommand string
 
 func (this *AbandonmentFixture) Setup() {
@@ -95,6 +91,10 @@ func (this *AbandonmentFixture) Dispatch(context.Context, ...*contracts.Message)
 	defer this.dispatchLock.Unlock()
 	this.dispatchCalls++
 	return nil
+}
+
+func (this *AbandonmentFixture) Decorate(ctx context.Context, message any) any {
+	return message
 }
 
 func (this *AbandonmentFixture) TestBlockedHandleCallerPanicsWhenShutdownPrecedesDurableWrite() {

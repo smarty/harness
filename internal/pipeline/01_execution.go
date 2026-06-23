@@ -18,7 +18,6 @@ type execution struct {
 	output      chan *unitOfWork
 	executor    executor
 	decorator   contracts.Decorator
-	values      []any // reusable per-batch scratch buffer for the decorator.
 }
 
 func newExecution(
@@ -62,8 +61,8 @@ func (this *execution) Listen() {
 				for _, result := range outgoing {
 					message := this.newMessage()
 					message.ID = 0
-					message.Type = this.typeNames[reflect.TypeOf(result)]
 					message.Value = result
+					message.Type = this.typeNames[reflect.TypeOf(message.Value)]
 					message.Content = generic.ReclaimBuffer(message.Content, initialContentBufferSize)
 					message.ContentType = ""
 					unit.results = append(unit.results, message)
@@ -79,24 +78,17 @@ func (this *execution) Listen() {
 	}
 }
 
-// applyDecorator hands the batch's produced values to the Decorator and writes
-// any replacements back onto their messages. It runs per-batch over exactly the
-// slice that batch produced, so each value is decorated with its own context. A
-// decorator that returns a slice of a different length is ignored (the messages
-// are left intact) — write-back only happens when the contract is honored.
+// applyDecorator hands each of the batch's produced values to the Decorator and
+// writes the returned replacement back onto its message. It runs per-batch over
+// exactly the slice that batch produced, so each value is decorated with its own
+// context. Per the Decorator contract the replacement must keep the same concrete
+// Go type, since each message's Type name was derived from the original value
+// before decoration runs.
 func (this *execution) applyDecorator(ctx context.Context, produced []*contracts.Message) {
 	if len(produced) == 0 {
 		return
 	}
-	this.values = this.values[:0]
 	for _, message := range produced {
-		this.values = append(this.values, message.Value)
-	}
-	this.values = this.decorator.Decorate(ctx, this.values)
-	if len(this.values) != len(produced) {
-		return
-	}
-	for i := range produced {
-		produced[i].Value = this.values[i]
+		message.Value = this.decorator.Decorate(ctx, message.Value)
 	}
 }
