@@ -7,9 +7,16 @@
 //
 // Callers register domain objects whose Execute.../Apply... methods drive the
 // pipeline via Options.DomainTypes(...), and supply collaborators (Writer, Dispatcher,
-// Serializer, Monitor) via the corresponding Options.*. All collaborators
+// Serializer, Monitor, Decorator) via the corresponding Options.*. All collaborators
 // default to a no-op implementation, so omitting them produces a runnable but
 // inert pipeline — useful for tests, but not for production.
+//
+// The optional Decorator runs inside the execution stage, per-batch, over
+// exactly the values a batch produced — before they are serialized and
+// persisted — using the context that accompanied the originating command at the
+// entrypoint and a timestamp captured once per batch (see Options.Clock). A
+// replacement value must keep the same concrete Go type, since each message's
+// registered Type name is derived before decoration runs.
 //
 // The only exported entry point is New(ctx, options...); every internal stage
 // type is unexported and cannot be constructed directly by callers.
@@ -48,6 +55,7 @@ import (
 	"context"
 	"io"
 	"reflect"
+	"time"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/pipeline"
@@ -56,8 +64,8 @@ import (
 
 // New constructs a staged, store-and-forward message-handling pipeline.
 // Register domain types (handlers/observers) via Options.DomainTypes, and wire
-// real Writer, Dispatcher, Serializer, and Monitor collaborators via the
-// corresponding Options.* functions. Collaborators default to a shared
+// real Writer, Dispatcher, Serializer, Monitor, and Decorator collaborators via
+// the corresponding Options.* functions. Collaborators default to a shared
 // no-op implementation, so omitting them produces a runnable but inert
 // pipeline — useful for tests, but not for production.
 //
@@ -124,6 +132,15 @@ func (singleton) Dispatcher(value contracts.Dispatcher) option {
 	return func(this *pipeline.Configuration) { this.Dispatcher = value }
 }
 
+// Decorator sets the collaborator that transforms the values a domain handler
+// produced — before they are serialized and persisted — using the context that
+// accompanied the originating command and a per-batch timestamp (see Clock). It
+// runs per-batch within the execution stage. Defaults to a no-op that returns
+// its messages unchanged.
+func (singleton) Decorator(value contracts.Decorator) option {
+	return func(this *pipeline.Configuration) { this.Decorator = value }
+}
+
 // BurstCapacity sets the buffer size of the channel between the entrypoint and
 // execution stages. Larger values absorb more burst traffic before back-pressure
 // reaches callers. Must be >= 1 or New returns an error. Default: 1024.
@@ -157,6 +174,13 @@ func (singleton) ShedThreshold(value float64) option {
 	return func(this *pipeline.Configuration) { this.ShedThreshold = value }
 }
 
+// Clock sets the function the execution stage calls to obtain the timestamp
+// passed to the Decorator (once per batch). Override it to inject a
+// deterministic clock in tests. Defaults to time.Now().UTC().
+func (singleton) Clock(clock func() time.Time) option {
+	return func(this *pipeline.Configuration) { this.Clock = clock }
+}
+
 func (singleton) defaults(options ...option) []option {
 	var blank nop
 	return append([]option{
@@ -164,6 +188,8 @@ func (singleton) defaults(options ...option) []option {
 		Options.Storage(blank),
 		Options.Serializer(blank),
 		Options.Dispatcher(blank),
+		Options.Decorator(blank),
+		Options.Clock(blank.utcNow),
 		Options.BurstCapacity(1024),
 		Options.PipelineBufferCapacity(4),
 		Options.ExecutionUnitSize(64),
@@ -175,8 +201,10 @@ func (singleton) defaults(options ...option) []option {
 // zero options and still produce a runnable (if inert) pipeline.
 type nop struct{}
 
-func (nop) Track(any)                                             {}
-func (nop) Serialize(io.Writer, any) error                        { return nil }
-func (nop) ContentType() string                                   { return "" }
-func (nop) Dispatch(context.Context, ...*contracts.Message) error { return nil }
-func (nop) Exec(context.Context, any) error                       { return nil }
+func (nop) Track(any)                                                {}
+func (nop) Serialize(io.Writer, any) error                           { return nil }
+func (nop) ContentType() string                                      { return "" }
+func (nop) Dispatch(context.Context, ...*contracts.Message) error    { return nil }
+func (nop) Exec(context.Context, any) error                          { return nil }
+func (nop) Decorate(_ context.Context, _ time.Time, message any) any { return message }
+func (nop) utcNow() time.Time                                        { return time.Now().UTC() }

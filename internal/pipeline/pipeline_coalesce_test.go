@@ -5,6 +5,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/better"
@@ -60,9 +61,11 @@ func (this *CoalesceFixture) Setup() {
 	var err error
 	this.pipeline, err = Build(this.Context(), Configuration{
 		Monitor:                this,
+		Clock:                  time.Now,
 		Storage:                this,
 		Serializer:             this,
 		Dispatcher:             this,
+		Decorator:              this,
 		DomainTypes:            []any{this},
 		BurstCapacity:          coalesceCallers, // every caller enqueues without blocking.
 		PipelineBufferCapacity: 4,
@@ -112,6 +115,9 @@ func (this *CoalesceFixture) Dispatch(_ context.Context, messages ...*contracts.
 		this.dispatched = append(this.dispatched, message.Value)
 	}
 	return nil
+}
+func (this *CoalesceFixture) Decorate(_ context.Context, _ time.Time, message any) any {
+	return message
 }
 
 func (this *CoalesceFixture) Track(observation any) {

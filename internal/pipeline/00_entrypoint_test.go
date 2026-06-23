@@ -66,6 +66,24 @@ func (this *EntrypointFixture) TestHandlePushesBatchAndBlocksUntilCompletion() {
 	this.So(this.tracked, should.Contain, monitoring.BatchComplete{})
 }
 
+func (this *EntrypointFixture) TestHandleBatchCarriesContext() {
+	go this.subject.Handle(this.ctx, "msg")
+
+	item := <-this.work
+	this.So(item.ctx, should.Equal, this.ctx)
+
+	item.complete(true)
+}
+
+func (this *EntrypointFixture) TestAwaitBatchCarriesContext() {
+	go this.subject.await(this.ctx, "msg")
+
+	item := <-this.work
+	this.So(item.ctx, should.Equal, this.ctx)
+
+	item.complete(true)
+}
+
 func (this *EntrypointFixture) TestHandleSerializesMultipleConcurrentCalls() {
 	done := make(chan struct{}, 3)
 	go func() { this.subject.Handle(this.ctx, "a"); done <- struct{}{} }()

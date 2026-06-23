@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/better"
@@ -46,9 +47,11 @@ func (this *PipelineFixture) Setup() {
 	var err error
 	this.pipeline, err = Build(this.ctx, Configuration{
 		Monitor:                this,
+		Clock:                  time.Now,
 		Storage:                this,
 		Serializer:             this,
 		Dispatcher:             this,
+		Decorator:              this,
 		DomainTypes:            []any{this},
 		BurstCapacity:          1024,
 		PipelineBufferCapacity: 4,
@@ -60,6 +63,10 @@ func (this *PipelineFixture) Setup() {
 	for _, listener := range this.pipeline.Listeners {
 		this.waiter.Go(listener.Listen)
 	}
+}
+
+func (this *PipelineFixture) Decorate(_ context.Context, _ time.Time, message any) any {
+	return message
 }
 
 // ExecuteCommand is picked up by scan() as the Execute-prefixed method driving

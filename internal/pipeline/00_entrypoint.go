@@ -34,10 +34,11 @@ func newEntrypoint(monitor contracts.Monitor, work chan *batch, shedThreshold fl
 	}
 }
 
-func (this *entrypoint) prepare(messages ...any) (waiter *sync.WaitGroup, item *batch, failed *atomic.Bool) {
+func (this *entrypoint) prepare(ctx context.Context, messages ...any) (waiter *sync.WaitGroup, item *batch, failed *atomic.Bool) {
 	waiter = this.waiters.Get()
 	waiter.Add(1)
 	item = this.batches.Get()
+	item.ctx = ctx
 	item.instructions = messages
 	failed = new(atomic.Bool)
 	item.complete = func(stored bool) {
@@ -48,6 +49,7 @@ func (this *entrypoint) prepare(messages ...any) (waiter *sync.WaitGroup, item *
 			this.monitor.Track(batchComplete)
 		}
 		waiter.Done()
+		item.ctx = nil // pool hygiene: don't pin a completed request's context.
 		this.batches.Put(item)
 	}
 	return waiter, item, failed
@@ -64,14 +66,14 @@ func (this *entrypoint) waiterDone(waiter *sync.WaitGroup) (done chan struct{}) 
 	return done
 }
 
-func (this *entrypoint) Handle(_ context.Context, messages ...any) {
+func (this *entrypoint) Handle(ctx context.Context, messages ...any) {
 	this.lock.RLock()
 	if this.closed {
 		this.lock.RUnlock()
 		return
 	}
 
-	waiter, item, failed := this.prepare(messages...)
+	waiter, item, failed := this.prepare(ctx, messages...)
 	select {
 	case this.work <- item:
 		// fast path: a slot is available, take it deterministically rather than
@@ -111,7 +113,7 @@ func (this *entrypoint) await(ctx context.Context, message any) {
 		return
 	}
 
-	waiter, batch, failed := this.prepare(message)
+	waiter, batch, failed := this.prepare(ctx, message)
 
 	select {
 	case this.work <- batch:

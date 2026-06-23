@@ -30,17 +30,27 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 		})
 	)
 
-	entry := newEntrypoint(config.Monitor, batches, config.ShedThreshold)
-	adapter := newHTTPAdapter(entry)
+	entrypoint := newEntrypoint(config.Monitor, batches, config.ShedThreshold)
+	adapter := newHTTPAdapter(entrypoint)
 	result = contracts.Pipeline{
 		SheddingHTTPWrapper: adapter.HTTPHandler,
 		SheddingEntrypoint:  adapter,
-		BlockingEntrypoint:  entry,
+		BlockingEntrypoint:  entrypoint,
 		Listeners: []contracts.Listener{
 			newRecovery(ctx, adapters.NewRecovery(config.Storage), recoveryBatchSize, work4a, wait, config.Monitor),
-			entry,
-			newExecution(config.Monitor, config.ExecutionUnitSize, unitPool.Get, messagePool.Get,
-				config.MessageTypes, batches, work1, newRouter(config.DomainTypes...)),
+			entrypoint,
+			newExecution(
+				config.Monitor,
+				config.Clock,
+				config.ExecutionUnitSize,
+				unitPool.Get,
+				messagePool.Get,
+				config.MessageTypes,
+				batches,
+				work1,
+				newRouter(config.DomainTypes...),
+				config.Decorator,
+			),
 			newSerialization(config.Monitor, config.Serializer, work1, work2),
 			newPersistence(ctx, config.Monitor, work2, work3, adapters.NewWriter(config.Storage), wait),
 			newCompletion(work3, work4b),

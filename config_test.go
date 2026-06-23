@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/smarty/gunit/v2"
 	"github.com/smarty/gunit/v2/assert/should"
@@ -53,6 +54,13 @@ func (this *ConfigFixture) TestDefaultCollaboratorsAreNop() {
 	this.So(cfg.Serializer, should.Equal, nop{})
 	this.So(cfg.Dispatcher, should.Equal, nop{})
 	this.So(cfg.Storage, should.Equal, nop{})
+	this.So(cfg.Decorator, should.Equal, nop{})
+}
+
+func (this *ConfigFixture) TestDecoratorOptionOverridesDefault() {
+	decorator := &recordingDecorator{}
+	cfg := this.apply(Options.Decorator(decorator))
+	this.So(cfg.Decorator, should.Equal, decorator)
 }
 
 func (this *ConfigFixture) TestTypesOptionStoresValuesVerbatim() {
@@ -119,4 +127,10 @@ type recordingMonitor struct{ observations []any }
 
 func (this *recordingMonitor) Track(observation any) {
 	this.observations = append(this.observations, observation)
+}
+
+type recordingDecorator struct{}
+
+func (this *recordingDecorator) Decorate(_ context.Context, _ time.Time, message any) any {
+	return message
 }

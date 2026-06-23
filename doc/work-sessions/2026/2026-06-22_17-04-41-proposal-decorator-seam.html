@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal — harness: generic Decorator seam</title>
+<style>
+  :root{
+    --ink:#1c2330; --muted:#5b6677; --line:#dce3ec; --bg:#f6f8fb; --card:#fff;
+    --accent:#2c6fb5; --accent2:#1f8a64; --warn:#b5552c; --code-bg:#0f1722; --code-ink:#dce6f2;
+    --mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;font-size:16px}
+  .wrap{max-width:920px;margin:0 auto;padding:48px 28px 96px}
+  header.title{border-bottom:3px solid var(--accent);padding-bottom:20px;margin-bottom:8px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:700;margin:0}
+  h1{font-size:30px;line-height:1.2;margin:8px 0 6px}
+  .meta{color:var(--muted);font-size:13px;font-family:var(--mono)}
+  .repo{display:inline-block;background:#eaf1f9;color:var(--accent);border:1px solid #cfe0f1;border-radius:6px;padding:2px 9px;font-family:var(--mono);font-size:12px;font-weight:600}
+  h2{font-size:21px;margin:44px 0 12px;padding-top:10px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:26px 0 8px}
+  p{margin:12px 0}
+  code{font-family:var(--mono);font-size:13.5px;background:#eef2f7;border:1px solid #e0e7f0;border-radius:4px;padding:1px 5px}
+  pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:18px 20px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.55;margin:16px 0}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:13px}
+  .cmt{color:#6f8196}
+  .kw{color:#7cc4ff}
+  .str{color:#9ad39a}
+  .fn{color:#ffd479}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 24px;margin:18px 0;box-shadow:0 1px 2px rgba(20,40,70,.04)}
+  .callout{border-left:4px solid var(--accent);background:#eef5fc;border-radius:0 10px 10px 0;padding:14px 18px;margin:18px 0}
+  .callout.warn{border-left-color:var(--warn);background:#fcf2ec}
+  .callout.ok{border-left-color:var(--accent2);background:#ecf7f1}
+  .callout h4{margin:0 0 6px;font-size:14px;letter-spacing:.02em;text-transform:uppercase}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:#eef2f7;font-weight:700}
+  td code{font-size:12.5px}
+  ul,ol{margin:12px 0;padding-left:24px}
+  li{margin:6px 0}
+  .chk{list-style:none;padding-left:4px}
+  .chk li{position:relative;padding-left:30px;margin:9px 0}
+  .chk li::before{content:'';position:absolute;left:0;top:3px;width:17px;height:17px;border:2px solid var(--accent);border-radius:4px}
+  .chk li.red::before{border-color:var(--warn)}
+  .chk li.green::before{border-color:var(--accent2)}
+  .chk li.done::before{background:var(--accent2);border-color:var(--accent2)}
+  .chk li.done::after{content:'✓';position:absolute;left:3px;top:1px;color:#fff;font-size:12px;font-weight:700;line-height:1}
+  .phase{background:#fbfcfe;border:1px solid var(--line);border-radius:12px;padding:6px 22px 18px;margin:18px 0}
+  .phase h3{color:var(--accent);border-bottom:1px dashed var(--line);padding-bottom:8px}
+  .tag{display:inline-block;font-family:var(--mono);font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:4px;vertical-align:middle;margin-right:6px}
+  .tag.red{background:#fae3d8;color:var(--warn)}
+  .tag.green{background:#def0e6;color:var(--accent2)}
+  .tag.refactor{background:#e7ecf3;color:var(--muted)}
+  .svgwrap{overflow-x:auto;margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .filepath{font-family:var(--mono);font-size:12px;color:var(--muted);background:#eef2f7;border-radius:5px;padding:2px 7px;display:inline-block;margin-bottom:6px}
+  footer{margin-top:60px;border-top:1px solid var(--line);padding-top:18px;color:var(--muted);font-size:13px}
+  .seq{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}
+  .seq .step{flex:1;min-width:200px;background:#fbfcfe;border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .seq .step b{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="title">
+  <p class="kicker">Implementation Proposal · Work Session</p>
+  <h1>A generic <code>Decorator</code> seam for request-context-driven message enrichment</h1>
+  <p class="meta">2026-06-22 17:04:41 &nbsp;·&nbsp; <span class="repo">github.com/smarty/harness/v2</span> &nbsp;·&nbsp; branch <code>seam-context-meta</code></p>
+</header>
+
+<p>This is <strong>1 of 3</strong> coordinated proposals. The other two live in the <span class="repo">message-registry/v4</span> and <span class="repo">billing-context (root)</span> repos. This document covers the <em>open-source, general-purpose</em> piece: a new extension point in the harness pipeline. It deliberately contains <strong>no</strong> knowledge of <code>Meta</code>, message-registry, or HTTP headers — that coupling stays in the consuming application.</p>
+
+<h2>Background</h2>
+<p>The harness drives a store-and-forward pipeline: <code>entrypoint → execution → serialization → persistence → completion → broadcast → terminal</code>. Domain handlers (<code>Execute&lt;T&gt;(cmd, broadcast func(...any))</code>) are deliberately pure — they never see a <code>context.Context</code>, and we want to keep it that way.</p>
+<p>The consuming application needs to attach request-scoped data to every message a command produces <em>before that message is serialized and persisted</em> (the persisted bytes are what recovery re-dispatches, so doing it later — e.g. in the <code>Dispatcher</code> — is too late and would leave the stored copy incomplete). Today there is <strong>no</strong> hook between "domain produced a value" and "value gets serialized," and the request <code>context.Context</code> that arrives at the entrypoint is discarded:</p>
+
+<div class="card">
+<span class="filepath">internal/pipeline/00_entrypoint.go:67</span>
+<pre><code><span class="kw">func</span> (this *entrypoint) <span class="fn">Handle</span>(_ context.Context, messages ...<span class="kw">any</span>) {  <span class="cmt">// ctx ignored!</span></code></pre>
+<span class="filepath">internal/pipeline/contracts.go:69</span>
+<pre><code><span class="kw">type</span> batch <span class="kw">struct</span> {
+    instructions []<span class="kw">any</span>
+    complete     <span class="kw">func</span>(stored <span class="kw">bool</span>)
+}  <span class="cmt">// no ctx field — the request context never travels with the work</span></code></pre>
+</div>
+
+<p>We need the harness to (a) carry each command's context forward and (b) expose a generic seam where a caller-supplied collaborator can transform the produced values — without the harness learning anything domain-specific.</p>
+
+<h2>Approach</h2>
+<p>Add a fourth optional collaborator — <code>Decorator</code> — alongside the existing <code>Serializer</code>, <code>Dispatcher</code>, and <code>Monitor</code>. It follows the same pattern: an interface in <code>contracts</code>, an <code>Options.Decorator(...)</code> setter, and a no-op default so existing callers are unaffected.</p>
+
+<div class="card">
+<span class="filepath">contracts/contracts.go (new)</span>
+<pre><code><span class="cmt">// Decorator transforms the message values a domain handler produced, before
+// they are serialized. It receives the context that accompanied the originating
+// command at the entrypoint, so request-scoped data can be applied per message.
+//
+// Implementations MUST return a slice of the same length, each element either
+// the original value or a replacement of the SAME concrete Go type: the
+// pipeline has already derived each message's registered Type name from the
+// pre-decoration value. The default no-op Decorator returns messages unchanged.</span>
+<span class="kw">type</span> Decorator <span class="kw">interface</span> {
+    <span class="fn">Decorate</span>(ctx context.Context, messages []<span class="kw">any</span>) []<span class="kw">any</span>
+}</code></pre>
+</div>
+
+<h3>Where the seam fires — and why granularity matters</h3>
+<p>The single most important design detail: a <code>batch</code> (one <code>Handle(ctx, …)</code> call) carries one context, but the execution stage <em>coalesces multiple batches</em> into a single <code>unitOfWork</code> (up to <code>ExecutionUnitSize</code>, default 64). So the context must ride on the <strong>batch</strong>, and decoration must run <strong>per-batch</strong> over exactly the slice of results that batch produced — never at unit granularity, or two requests' contexts would cross-contaminate.</p>
+
+<div class="svgwrap">
+<svg viewBox="0 0 880 320" width="880" height="320" font-family="var(--sans)" role="img" aria-label="Per-batch decoration within a coalesced unit of work">
+  <defs>
+    <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#2c6fb5"/></marker>
+  </defs>
+  <text x="20" y="26" font-size="14" font-weight="700" fill="#1c2330">Two requests, each with its own ctx → one coalesced unit</text>
+
+  <!-- batch A -->
+  <rect x="20" y="50" width="220" height="92" rx="9" fill="#eef5fc" stroke="#2c6fb5"/>
+  <text x="32" y="72" font-size="13" font-weight="700" fill="#2c6fb5">batch A</text>
+  <text x="32" y="92" font-size="12" fill="#1c2330" font-family="monospace">ctx A (UserID=42)</text>
+  <text x="32" y="112" font-size="12" fill="#5b6677">cmd → ApproveOrder</text>
+  <text x="32" y="130" font-size="12" fill="#5b6677">produces: msg0, msg1</text>
+
+  <!-- batch B -->
+  <rect x="20" y="158" width="220" height="92" rx="9" fill="#ecf7f1" stroke="#1f8a64"/>
+  <text x="32" y="180" font-size="13" font-weight="700" fill="#1f8a64">batch B</text>
+  <text x="32" y="200" font-size="12" fill="#1c2330" font-family="monospace">ctx B (UserID=99)</text>
+  <text x="32" y="220" font-size="12" fill="#5b6677">cmd → AdjustOrder</text>
+  <text x="32" y="238" font-size="12" fill="#5b6677">produces: msg2</text>
+
+  <!-- arrows to execution -->
+  <line x1="244" y1="96" x2="320" y2="130" stroke="#2c6fb5" stroke-width="2" marker-end="url(#ah)"/>
+  <line x1="244" y1="204" x2="320" y2="170" stroke="#1f8a64" stroke-width="2" marker-end="url(#ah)"/>
+
+  <!-- execution stage -->
+  <rect x="324" y="58" width="276" height="200" rx="10" fill="#fbfcfe" stroke="#dce3ec"/>
+  <text x="338" y="80" font-size="13" font-weight="700" fill="#1c2330">execution.Listen()</text>
+  <text x="338" y="100" font-size="11.5" fill="#5b6677">for each batch:</text>
+  <text x="350" y="120" font-size="11.5" fill="#1c2330" font-family="monospace">start := len(results)</text>
+  <text x="350" y="138" font-size="11.5" fill="#1c2330" font-family="monospace">Execute(...) → results</text>
+  <text x="350" y="156" font-size="11.5" fill="#b5552c" font-family="monospace">Decorate(batch.ctx,</text>
+  <text x="362" y="172" font-size="11.5" fill="#b5552c" font-family="monospace">results[start:])</text>
+  <rect x="338" y="188" width="250" height="58" rx="7" fill="#fff" stroke="#dce3ec"/>
+  <text x="348" y="208" font-size="11" fill="#5b6677">unit.results (coalesced):</text>
+  <text x="348" y="228" font-size="11" font-family="monospace" fill="#2c6fb5">msg0,msg1 [ctxA]</text>
+  <text x="470" y="228" font-size="11" font-family="monospace" fill="#1f8a64">msg2 [ctxB]</text>
+
+  <!-- arrow to serialization -->
+  <line x1="604" y1="158" x2="676" y2="158" stroke="#2c6fb5" stroke-width="2" marker-end="url(#ah)"/>
+  <rect x="680" y="120" width="180" height="76" rx="10" fill="#0f1722"/>
+  <text x="694" y="148" font-size="13" font-weight="700" fill="#dce6f2">serialization</text>
+  <text x="694" y="170" font-size="11" fill="#9ad39a" font-family="monospace">Value → Content</text>
+  <text x="694" y="186" font-size="11" fill="#6f8196" font-family="monospace">(already decorated)</text>
+</svg>
+</div>
+
+<div class="callout ok">
+  <h4>Why this satisfies all three constraints</h4>
+  <ul style="margin:6px 0">
+    <li><strong>harness stays general:</strong> it depends only on <code>context.Context</code> + an interface it defines. No <code>Meta</code>, no registry.</li>
+    <li><strong>domain stays context-free:</strong> the <code>Execute&lt;T&gt;</code> signature is untouched; decoration runs in a stage the harness owns.</li>
+    <li><strong>before serialization &amp; persistence:</strong> the seam fires inside the execution stage, upstream of both.</li>
+  </ul>
+</div>
+
+<h3>The four edits</h3>
+<table>
+  <tr><th>File</th><th>Change</th></tr>
+  <tr><td><code>contracts/contracts.go</code></td><td>Add the <code>Decorator</code> interface (above).</td></tr>
+  <tr><td><code>config.go</code></td><td>Add <code>Options.Decorator(value)</code> setter; add <code>Options.Decorator(blank)</code> to <code>defaults(...)</code>; extend <code>nop</code> with <code>Decorate(ctx, m) []any { return m }</code>.</td></tr>
+  <tr><td><code>internal/pipeline/contracts.go</code><br><code>internal/pipeline/00_entrypoint.go</code></td><td>Add <code>ctx context.Context</code> to <code>batch</code>; thread it through <code>prepare(ctx, …)</code>, <code>Handle</code> (stop discarding it), and <code>await</code>; clear it on recycle for pool hygiene.</td></tr>
+  <tr><td><code>internal/pipeline/01_execution.go</code><br><code>internal/pipeline/pipeline.go</code><br><code>config.go</code> (Configuration)</td><td>Add <code>Decorator</code> to <code>Configuration</code>; pass into <code>newExecution(...)</code>; apply per-batch over <code>unit.results[start:]</code> using <code>batch.ctx</code>.</td></tr>
+</table>
+
+<h3>The execution-stage application (sketch)</h3>
+<div class="card">
+<span class="filepath">internal/pipeline/01_execution.go</span>
+<pre><code><span class="kw">for</span> batch := <span class="kw">range</span> this.input {
+    <span class="cmt">// ... unit allocation unchanged ...</span>
+    unit.completions = <span class="fn">append</span>(unit.completions, batch.complete)
+    start := <span class="fn">len</span>(unit.results)
+    <span class="kw">for</span> _, instruction := <span class="kw">range</span> batch.instructions {
+        this.executor.<span class="fn">Execute</span>(instruction, <span class="kw">func</span>(outgoing ...<span class="kw">any</span>) { <span class="cmt">/* append to unit.results */</span> })
+    }
+    this.<span class="fn">applyDecorator</span>(batch.ctx, unit.results[start:])   <span class="cmt">// ← new</span>
+    <span class="cmt">// ... flush logic unchanged ...</span>
+}
+
+<span class="kw">func</span> (this *execution) <span class="fn">applyDecorator</span>(ctx context.Context, produced []*contracts.Message) {
+    <span class="kw">if</span> <span class="fn">len</span>(produced) == <span class="str">0</span> { <span class="kw">return</span> }
+    this.values = this.values[:<span class="str">0</span>]
+    <span class="kw">for</span> _, m := <span class="kw">range</span> produced { this.values = <span class="fn">append</span>(this.values, m.Value) }
+    this.values = this.decorator.<span class="fn">Decorate</span>(ctx, this.values)
+    <span class="kw">for</span> i := <span class="kw">range</span> produced { produced[i].Value = this.values[i] }
+}</code></pre>
+</div>
+
+<h2>Trade-offs &amp; open questions</h2>
+<table>
+  <tr><th>Topic</th><th>Assessment</th></tr>
+  <tr><td>Backward compatibility</td><td><strong>Fully compatible.</strong> <code>Decorator</code> defaults to the shared <code>nop</code>; zero-option pipelines behave exactly as before.</td></tr>
+  <tr><td>Message <code>Type</code> integrity</td><td><code>Message.Type</code> is derived from <code>reflect.TypeOf(result)</code> at creation — before decoration. The interface contract requires the replacement value keep the <em>same concrete type</em>. (Our <code>Meta</code> use respects this: <code>SetMeta</code> returns a copy of the same struct type.)</td></tr>
+  <tr><td>Misbehaving decorator (wrong length)</td><td><strong>Open question.</strong> Options: (a) document the same-length contract and index defensively; (b) skip write-back if <code>len</code> differs; (c) <code>Monitor.Track</code> a new observation + panic, mirroring serialization's fail-fast. Recommendation: defensive guard that no-ops on mismatch, no new observation type for v1.</td></tr>
+  <tr><td>Per-batch overhead</td><td>One extra slice reset + copy per batch when a decorator is set; a single bounds check when it is the nop. Negligible vs. serialization/IO. The reusable <code>this.values</code> buffer avoids per-batch allocation.</td></tr>
+  <tr><td>Pool hygiene</td><td><code>batch</code> is pooled; holding a request <code>ctx</code> after completion would pin its values. Clear <code>item.ctx = nil</code> in the <code>complete</code> closure (extend <code>pipeline_pool_hygiene_test.go</code>).</td></tr>
+  <tr><td>Consumer/replay paths</td><td>The <code>BlockingEntrypoint</code> (MQ consume, cron) passes a context without request data. That is correct and expected — the decorator simply finds nothing request-scoped to apply. Documented on the interface.</td></tr>
+</table>
+
+<h2>Implementation checklist</h2>
+
+<div class="phase">
+<h3>Phase 1 — The contract &amp; option (no behavior yet)</h3>
+<ul class="chk">
+  <li class="red done"><span class="tag red">RED</span> In <code>config_test.go</code>, add a test asserting <code>Options.Decorator(x)</code> stores <code>x</code> on <code>Configuration</code>, and that <code>defaults()</code> supplies a non-nil no-op when unset. Run — fails to compile (no such option/field).</li>
+  <li class="green done"><span class="tag green">GREEN</span> Add the <code>Decorator</code> interface to <code>contracts/contracts.go</code>; add <code>Decorator</code> field to <code>pipeline.Configuration</code>; add <code>Options.Decorator(...)</code>; add it to <code>defaults(...)</code>; add <code>func (nop) Decorate(context.Context, []any) []any</code>. Run — green.</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase 2 — Carry ctx on the batch</h3>
+<ul class="chk">
+  <li class="red done"><span class="tag red">RED</span> In <code>00_entrypoint_test.go</code>, assert a batch produced by <code>Handle(ctx, …)</code> / <code>await(ctx, …)</code> carries that <code>ctx</code>. Fails to compile (no field).</li>
+  <li class="green done"><span class="tag green">GREEN</span> Add <code>ctx context.Context</code> to <code>batch</code>; change <code>prepare</code> to accept &amp; store it; stop discarding ctx in <code>Handle</code>; pass ctx in <code>await</code>. Run — green.</li>
+  <li class="refactor done"><span class="tag refactor">HYGIENE</span> Clear <code>item.ctx = nil</code> in the <code>complete</code> closure; extend <code>pipeline_pool_hygiene_test.go</code> to assert a recycled batch carries no stale ctx. Run — green.</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase 3 — Apply the decorator in execution</h3>
+<ul class="chk">
+  <li class="red done"><span class="tag red">RED</span> In <code>01_execution_test.go</code>, add a fake <code>Decorator</code> that records the ctx it received and tags each value. Feed <strong>two batches with different contexts</strong> that coalesce into one unit; assert (1) each value was decorated with <em>its own</em> batch's ctx, (2) returned values replaced <code>Message.Value</code>, (3) ordering preserved. Run — fails (decorator never invoked).</li>
+  <li class="green done"><span class="tag green">GREEN</span> Add <code>decorator</code> + reusable <code>values []any</code> to <code>execution</code>; wire through <code>newExecution(...)</code> in <code>pipeline.go</code>; implement the per-batch <code>applyDecorator</code> over <code>unit.results[start:]</code>. Run — green.</li>
+  <li class="green done"><span class="tag green">GREEN</span> Add a defensive test: a decorator returning a wrong-length slice must not corrupt the unit (no panic, values left intact). Implement the guard. Run — green.</li>
+</ul>
+</div>
+
+<div class="phase">
+<h3>Phase 4 — Regression &amp; docs</h3>
+<ul class="chk">
+  <li class="green done"><span class="tag green">GREEN</span> Run <code>make test</code> (full suite, race + coverage). Confirm all existing pipeline tests stay green — the nop default must make this a no-op for current callers.</li>
+  <li class="refactor done"><span class="tag refactor">DOCS</span> Update the package doc comment in <code>config.go</code> to list <code>Decorator</code> among the collaborators and note it runs per-batch, pre-serialization, with the same-concrete-type contract.</li>
+</ul>
+</div>
+
+<h2>Your Turn</h2>
+<div class="callout">
+  <p style="margin:6px 0">The hands-on "Your Turn" for this effort is the <strong>pure enrichment function</strong> in the <span class="repo">message-registry/v4</span> repo — <code>meta.Decorate(ctx, now, messages)</code> — documented in that repo's companion proposal. It is the small, self-contained piece of real logic (read context, stamp timestamp, coalesce metadata onto each event). The harness changes in <em>this</em> document are mechanical plumbing and will be agent-implemented so the seam is ready for your function to plug into.</p>
+</div>
+
+<h2>Cross-repo sequencing</h2>
+<div class="seq">
+  <div class="step"><b>1. harness</b> (this doc)<br>Land the <code>Decorator</code> seam. Self-contained; merges independently.</div>
+  <div class="step"><b>2. message-registry</b><br>Export <code>meta.Decorate(...)</code> (your function). Self-contained; merges independently.</div>
+  <div class="step"><b>3. root</b><br>Implement the adapter + register it. Depends on tagged releases of (1) and (2); use local <code>replace</code> directives during development.</div>
+</div>
+<div class="callout warn">
+  <h4>Integration note</h4>
+  <p style="margin:6px 0">The harness has no dependency on the other two repos, so it can be developed, tested, tagged, and merged on its own. <code>root</code> is the only place the three meet; it will need <code>go.mod</code> <code>replace</code> directives pointing at the local harness and message-registry worktrees until both are tagged.</p>
+</div>
+
+<footer>
+  Proposal generated for review · harness <code>seam-context-meta</code> · part 1 of 3 (harness · message-registry · root).
+  No production code will be written until this plan is approved.
+</footer>
+
+</div>
+</body>
+</html>
