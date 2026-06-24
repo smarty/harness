@@ -10,6 +10,12 @@ test.db: test
 test.db.local:
 	(docker compose -f doc/docker-compose.yml up --wait && $(MAKE) test.db --no-print-directory); docker compose -f doc/docker-compose.yml down
 
+test.mq: test
+	go test -timeout=30s -race -covermode=atomic github.com/smarty/harness/v2/dispatcher/rabbitmq
+
+test.mq.local:
+	(docker compose -f doc/docker-compose.yml up --wait && $(MAKE) test.mq --no-print-directory); docker compose -f doc/docker-compose.yml down
+
 fmt:
 	go mod tidy && go fmt ./...
 
@@ -18,4 +24,4 @@ compile:
 
 build: test compile
 
-.PHONY: test test.db test.db.local fmt compile build
+.PHONY: test test.db test.db.local test.mq test.mq.local fmt compile build
