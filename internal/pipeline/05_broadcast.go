@@ -64,6 +64,7 @@ func (this *broadcast) dispatch() {
 	for attempt := 1; ; attempt++ {
 		err := this.dispatcher.Dispatch(this.ctx, this.buffer...)
 		if err == nil {
+			this.monitor.Track(monitoring.ResultsDispatched{Count: len(this.buffer)})
 			return
 		}
 		this.monitor.Track(monitoring.BroadcastError{

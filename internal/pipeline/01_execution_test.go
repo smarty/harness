@@ -13,6 +13,7 @@ import (
 	"github.com/smarty/gunit/v2/assert/better"
 	"github.com/smarty/gunit/v2/assert/should"
 	"github.com/smarty/harness/v2/contracts"
+	"github.com/smarty/harness/v2/contracts/monitoring"
 )
 
 func TestExecutionFixture(t *testing.T) {
@@ -222,6 +223,21 @@ func (this *ExecutionFixture) TestPerBatchDecorationUsesEachBatchContext() {
 	this.So(spy.calls[1].value, should.Equal, "a1")
 	this.So(spy.calls[2].ctx, should.Equal, ctxB)
 	this.So(spy.calls[2].value, should.Equal, "b0")
+}
+
+func (this *ExecutionFixture) TestInstructionsHandledIsCountedPerBatch() {
+	this.executeOutputs = [][]any{{"r1"}, {"r2"}, {"r3"}}
+	this.input <- &batch{instructions: []any{"m1", "m2"}, complete: func(bool) {}}
+	this.input <- &batch{instructions: []any{"m3"}, complete: func(bool) {}}
+	close(this.input)
+
+	go this.subject.Listen()
+
+	this.drain()
+	this.So(this.tracked, should.Equal, []any{
+		monitoring.InstructionsHandled{Count: 2},
+		monitoring.InstructionsHandled{Count: 1},
+	})
 }
 
 func (this *ExecutionFixture) TestClosedInputClosesOutput() {

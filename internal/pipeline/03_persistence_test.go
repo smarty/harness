@@ -81,7 +81,7 @@ func (this *PersistenceFixture) TestWritesAllResultsThenForwardsUnit() {
 	this.So(len(this.writeCalls), should.Equal, 1)
 	this.So(this.writeCalls[0], should.Equal, []*contracts.Message{m1, m2})
 	this.So(this.waits, should.BeEmpty)
-	this.So(this.tracked, should.BeEmpty)
+	this.So(this.tracked, should.Equal, []any{monitoring.ResultsPersisted{Count: 2}})
 }
 
 func (this *PersistenceFixture) TestEachUnitIsWrittenIndependently() {
@@ -98,20 +98,10 @@ func (this *PersistenceFixture) TestEachUnitIsWrittenIndependently() {
 	this.So(len(this.writeCalls), should.Equal, 2)
 	this.So(this.writeCalls[0], should.Equal, []*contracts.Message{m1})
 	this.So(this.writeCalls[1], should.Equal, []*contracts.Message{m2})
-	this.So(this.tracked, should.BeEmpty)
-}
-
-func (this *PersistenceFixture) TestEmptyResultsTriggersEmptyWrite() {
-	this.input <- &unitOfWork{}
-	close(this.input)
-
-	go this.subject.Listen()
-
-	units := this.drain()
-	this.So(len(units), should.Equal, 1)
-	this.So(len(this.writeCalls), should.Equal, 1)
-	this.So(this.writeCalls[0], should.BeEmpty)
-	this.So(this.tracked, should.BeEmpty)
+	this.So(this.tracked, should.Equal, []any{
+		monitoring.ResultsPersisted{Count: 1},
+		monitoring.ResultsPersisted{Count: 1},
+	})
 }
 
 func (this *PersistenceFixture) TestRetriesUntilWriteSucceeds() {
@@ -126,13 +116,14 @@ func (this *PersistenceFixture) TestRetriesUntilWriteSucceeds() {
 	this.So(len(units), should.Equal, 1)
 	this.So(len(this.writeCalls), should.Equal, 3)
 	assertBackoffWaits(this.Fixture, this.waits, 2)
-	this.So(this.tracked, should.HaveLength, 2)
-	for n, observation := range this.tracked {
+	this.So(this.tracked, should.HaveLength, 3)
+	for n, observation := range this.tracked[:2] {
 		failure, ok := observation.(monitoring.PersistenceError)
 		this.So(ok, should.BeTrue)
 		this.So(failure.Error, should.WrapError, monitoring.ErrPersistence)
 		this.So(failure.Attempt, should.Equal, n+1)
 	}
+	this.So(this.tracked[2], should.Equal, monitoring.ResultsPersisted{Count: 1})
 }
 
 func (this *PersistenceFixture) TestPersistenceAbandonsOnContextCancelAndDropsUnit() {
@@ -154,6 +145,33 @@ func (this *PersistenceFixture) TestPersistenceAbandonsOnContextCancelAndDropsUn
 	this.So(failure.Error, should.WrapError, monitoring.ErrPersistence)
 	this.So(failure.Attempt, should.Equal, 1)
 	this.So(this.tracked[1], should.Equal, monitoring.PersistenceAbandoned{Attempts: 1})
+}
+
+func (this *PersistenceFixture) TestResultsPersistedIsCountedOnSuccess() {
+	m1 := &contracts.Message{Value: "a"}
+	m2 := &contracts.Message{Value: "b"}
+	this.input <- &unitOfWork{results: []*contracts.Message{m1, m2}}
+	close(this.input)
+
+	go this.subject.Listen()
+
+	this.drain()
+	this.So(this.tracked, should.Equal, []any{monitoring.ResultsPersisted{Count: 2}})
+}
+
+func (this *PersistenceFixture) TestNothingPersistedIsCountedOnAbandonment() {
+	this.writeFailCount = 1 << 30 // always fail
+	this.waitErr = context.Canceled
+	this.input <- &unitOfWork{results: []*contracts.Message{{Value: "abandoned"}}}
+	close(this.input)
+
+	go this.subject.Listen()
+
+	this.drain()
+	for _, observation := range this.tracked {
+		_, isCount := observation.(monitoring.ResultsPersisted)
+		this.So(isCount, should.BeFalse)
+	}
 }
 
 func (this *PersistenceFixture) TestClosedInputClosesOutput() {

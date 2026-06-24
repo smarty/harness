@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/smarty/harness/v2/contracts"
+	"github.com/smarty/harness/v2/contracts/monitoring"
 	"github.com/smarty/harness/v2/internal/generic"
 )
 
@@ -74,6 +75,7 @@ func (this *execution) Listen() {
 			})
 		}
 		this.applyDecorator(batch.ctx, unit.results[start:])
+		this.monitor.Track(monitoring.InstructionsHandled{Count: len(batch.instructions)})
 		if len(unit.completions) < this.maxUnitSize && len(this.input) > 0 {
 			continue // more to do
 		}

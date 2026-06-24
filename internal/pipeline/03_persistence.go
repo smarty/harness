@@ -47,6 +47,7 @@ func (this *persistence) Listen() {
 			}
 			continue
 		}
+		this.monitor.Track(monitoring.ResultsPersisted{Count: len(unit.results)})
 		this.output <- unit
 	}
 }
