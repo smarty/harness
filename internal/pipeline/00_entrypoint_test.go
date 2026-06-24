@@ -385,6 +385,13 @@ func (this *EntrypointFixture) TestHandle_ReturnsImmediatelyOnClosedPipeline() {
 	}
 }
 
+func (this *EntrypointFixture) TestEmptyMessagesAreIgnored() {
+	this.subject.Handle(this.ctx) // no messages: returns immediately, never enters the pipeline.
+
+	this.So(len(this.work), should.Equal, 0)
+	this.So(this.tracked, should.BeEmpty)
+}
+
 func (this *EntrypointFixture) TestHandle_PreservesVariadicMessages() {
 	go this.subject.Handle(this.ctx, "a", "b", "c")
 
