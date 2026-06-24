@@ -67,6 +67,9 @@ func (this *entrypoint) waiterDone(waiter *sync.WaitGroup) (done chan struct{}) 
 }
 
 func (this *entrypoint) Handle(ctx context.Context, messages ...any) {
+	if len(messages) == 0 {
+		return // nothing to store; never enters the pipeline.
+	}
 	this.lock.RLock()
 	if this.closed {
 		this.lock.RUnlock()

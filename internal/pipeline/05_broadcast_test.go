@@ -202,6 +202,21 @@ func (this *BroadcastFixture) TestNothingDispatchedIsCountedOnAbandonment() {
 	}
 }
 
+func (this *BroadcastFixture) TestEmptyResultsSkipsDispatchButForwards() {
+	this.input <- &unitOfWork{}
+	close(this.input)
+
+	go this.subject.Listen()
+
+	units := this.drain()
+	this.So(len(units), should.Equal, 1)
+	this.So(this.dispatchCalls, should.BeEmpty)
+	for _, observation := range this.tracked {
+		_, isCount := observation.(monitoring.ResultsDispatched)
+		this.So(isCount, should.BeFalse)
+	}
+}
+
 func (this *BroadcastFixture) TestClosedInputClosesOutput() {
 	close(this.input)
 	go this.subject.Listen()

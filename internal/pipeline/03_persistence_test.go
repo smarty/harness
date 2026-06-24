@@ -174,6 +174,21 @@ func (this *PersistenceFixture) TestNothingPersistedIsCountedOnAbandonment() {
 	}
 }
 
+func (this *PersistenceFixture) TestEmptyResultsSkipsWriteButForwards() {
+	this.input <- &unitOfWork{}
+	close(this.input)
+
+	go this.subject.Listen()
+
+	units := this.drain()
+	this.So(len(units), should.Equal, 1)
+	this.So(this.writeCalls, should.BeEmpty)
+	for _, observation := range this.tracked {
+		_, isCount := observation.(monitoring.ResultsPersisted)
+		this.So(isCount, should.BeFalse)
+	}
+}
+
 func (this *PersistenceFixture) TestClosedInputClosesOutput() {
 	close(this.input)
 	go this.subject.Listen()

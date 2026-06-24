@@ -49,6 +49,10 @@ func (this *broadcast) Listen() {
 
 func (this *broadcast) processFrom(input chan *unitOfWork) {
 	for unit := range input {
+		if len(unit.results) == 0 {
+			this.output <- unit // nothing to dispatch; forward (already durable).
+			continue
+		}
 		for _, message := range unit.results {
 			this.buffer = append(this.buffer, message)
 		}
