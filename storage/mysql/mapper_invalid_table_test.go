@@ -10,6 +10,9 @@ import (
 )
 
 func TestMapperInvalidTableFixture(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test suite in -short mode")
+	}
 	gunit.Run(new(MapperInvalidTableFixture), t)
 }
 
