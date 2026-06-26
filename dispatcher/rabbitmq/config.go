@@ -11,7 +11,7 @@ import (
 // repo-wide Options-singleton functional options. The package owns the connection
 // lifecycle (unlike database/sql), so it takes coordinates rather than a live handle.
 func NewDispatcher(address string, options ...option) *Dispatcher {
-	transport := &amqpTransport{address: address}
+	transport := &amqpTransport{address: promoteCredentials(address)}
 	for _, option := range append(Options.defaults(), options...) {
 		option(transport)
 	}

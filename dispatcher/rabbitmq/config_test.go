@@ -47,3 +47,9 @@ func (this *ConfigFixture) TestDialerOption_SetsDialer() {
 
 	this.So(transport.dialer == dialer, should.BeTrue)
 }
+
+func (this *ConfigFixture) TestAddress_PromotesQueryCredentialsToUserinfo() {
+	transport := this.transportOf(NewDispatcher("amqp://host/?username=bob&password=secret"))
+
+	this.So(transport.address, should.Equal, "amqp://bob:secret@host/")
+}

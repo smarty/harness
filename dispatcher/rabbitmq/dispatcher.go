@@ -2,6 +2,10 @@
 // harness, publishing messages to RabbitMQ over AMQP. It is the dispatcher
 // analog of storage/mysql: a thin, direct implementation over the
 // github.com/rabbitmq/amqp091-go driver rather than a messaging framework.
+//
+// NewDispatcher promotes ?username=&password= query credentials into the URL
+// userinfo (see credentials.go), where amqp091 reads them, so a single
+// messaging/v3-style address works for both the consumer and the dispatcher.
 package rabbitmq
 
 import (
