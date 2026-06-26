@@ -1,3 +1,5 @@
+//go:build integration
+
 package mysql
 
 import (
@@ -12,10 +14,6 @@ import (
 )
 
 func TestMapperFixture(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping long-running database tests.")
-	}
-	ensureDatabaseReadiness(t)
 	gunit.Run(new(MapperFixture), t, gunit.Options.IntegrationTests())
 }
 
@@ -25,6 +23,10 @@ type MapperFixture struct {
 	handle  *sql.DB
 	stride  uint64
 	subject *Mapper
+}
+
+func (this *MapperFixture) SetupSuite() {
+	ensureDatabaseReadiness(this.TestingT)
 }
 
 func (this *MapperFixture) Setup() {

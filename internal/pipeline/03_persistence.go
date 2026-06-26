@@ -34,6 +34,10 @@ func newPersistence(ctx context.Context, monitor contracts.Monitor, input, outpu
 func (this *persistence) Listen() {
 	defer close(this.output)
 	for unit := range this.input {
+		if len(unit.results) == 0 {
+			this.output <- unit // nothing to persist; forward so completions fire.
+			continue
+		}
 		for _, message := range unit.results {
 			this.buffer = append(this.buffer, message)
 		}
@@ -47,6 +51,7 @@ func (this *persistence) Listen() {
 			}
 			continue
 		}
+		this.monitor.Track(monitoring.ResultsPersisted{Count: len(unit.results)})
 		this.output <- unit
 	}
 }

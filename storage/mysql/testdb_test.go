@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/smarty/gunit/v2"
 )
 
 // Integration tests in this package require a local MySQL server.
@@ -18,7 +18,7 @@ import (
 
 const testSchemaName = "messaging"
 
-func ensureDatabaseReadiness(t *testing.T) {
+func ensureDatabaseReadiness(t gunit.TestingT) {
 	bootstrap, err := openDSN(buildDSN(""))
 	if err != nil {
 		t.Fatal("Database not available (is mysql running?):", err)

@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal: Skip Empty Work — Reject Empty Batches, Forward Empty Units</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #1a212b; --panel2: #161d26; --border: #2c3744;
+    --fg: #d6dde6; --muted: #8a98a8; --accent: #5ab0f2; --good: #5fc98f;
+    --warn: #e6c34a; --bad: #e8836f; --purple: #b58af0;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 34px 24px 90px; }
+  h1 { font-size: 25px; margin: 0 0 4px; letter-spacing: -.01em; }
+  h2 { font-size: 19px; margin: 40px 0 12px; border-bottom: 1px solid var(--border);
+    padding-bottom: 7px; }
+  h3 { font-size: 15.5px; margin: 24px 0 8px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+  code { font-family: var(--mono); font-size: 0.88em; background: #11161d;
+    padding: 1px 5px; border-radius: 4px; color: #cdd9e5; }
+  p { margin: 10px 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: 10px 30px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 8px; padding: 15px 20px; }
+  .meta div { font-size: 13px; }
+  .meta .k { color: var(--muted); display: block; margin-bottom: 2px; }
+  .callout { border-left: 4px solid var(--accent); background: #14283a;
+    padding: 13px 18px; border-radius: 6px; margin: 18px 0; }
+  .callout.good { border-color: var(--good); background: #16241c; }
+  .callout.warn { border-color: var(--warn); background: #2b2710; }
+  .callout.turn { border-color: var(--purple); background: #211a31; }
+  ul, ol { padding-left: 22px; } li { margin: 6px 0; }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 10px 0; }
+  th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--border);
+    vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  pre { background: var(--panel2); border: 1px solid var(--border); border-radius: 7px;
+    padding: 13px 15px; overflow-x: auto; font-family: var(--mono);
+    font-size: 12.5px; line-height: 1.55; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px;
+    border-radius: 10px; letter-spacing: .03em; }
+  .t-add { background: #16341f; color: var(--good); }
+  .t-edit { background: #14283a; color: var(--accent); }
+  .t-you { background: #2a2140; color: var(--purple); }
+  .phase { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 9px; padding: 4px 22px 18px; margin: 16px 0; }
+  .phase h3 { color: var(--accent); }
+  .check { list-style: none; padding-left: 0; }
+  .check li { padding-left: 26px; position: relative; margin: 9px 0; }
+  .check li::before { content: "☐"; position: absolute; left: 0; top: -1px;
+    color: var(--muted); font-size: 15px; }
+  .red::before { content: "🔴"; font-size: 12px; }
+  .green::before { content: "🟢"; font-size: 12px; }
+  .add-svg { margin: 12px 0; background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px; }
+  .footer { color: var(--muted); font-size: 12px; margin-top: 44px;
+    border-top: 1px solid var(--border); padding-top: 14px; }
+  .nowrap { white-space: nowrap; }
+  del { color: var(--bad); text-decoration: line-through; }
+  ins { color: var(--good); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Skip Empty Work</h1>
+  <div class="sub">Reject zero-instruction batches at the door · forward empty units without an empty write/dispatch &nbsp;·&nbsp; branch <code>mikewhat/more-counters</code></div>
+
+  <div class="meta">
+    <div><span class="k">Scope</span>3 production files + 3 test files</div>
+    <div><span class="k">Stages touched</span>entrypoint, persistence, broadcast</div>
+    <div><span class="k">Risk</span>Low — removes work, adds no new failure modes</div>
+    <div><span class="k">Follows from</span>branch-scan findings #1 &amp; #2</div>
+  </div>
+
+  <h2>Background</h2>
+  <p>The branch-scan of <code>more-counters</code> surfaced two related observations.
+    The new throughput counters now emit a <code>Count: 0</code> event whenever an empty
+    unit flows through persistence or broadcast, and the two tests that pinned the
+    "empty results trigger an empty write/dispatch" behavior were deleted. That raised
+    the underlying question: <strong>why do we do empty work at all?</strong></p>
+
+  <p>There are two distinct ways "nothing to do" reaches the pipeline today:</p>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Source</th><th>What happens now</th><th>Why it is wasteful</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Empty batch</strong><br><span class="nowrap"><code>Handle(ctx)</code> with no messages</span></td>
+        <td>A <code>batch</code> with <code>instructions: []</code> is pooled, enqueued onto
+          <code>work</code>, coalesced into a unit, and the caller blocks on the waiter
+          until an empty write "completes."</td>
+        <td>Occupies a <code>work</code> slot, consumes admission capacity, and makes a
+          blocking caller wait on a durable write that stores nothing.</td>
+      </tr>
+      <tr>
+        <td><strong>Empty unit</strong><br>a real batch whose instructions produce zero result messages</td>
+        <td>persistence calls <code>writer.Write()</code> with an empty buffer; broadcast
+          calls <code>dispatcher.Dispatch()</code> with an empty buffer. Both now also
+          emit a <code>Count: 0</code> counter.</td>
+        <td>An empty <code>INSERT</code> / empty publish is a pointless round-trip (and a
+          retry-able failure surface) for a no-op, plus counter noise.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Note these are independent: even with empty batches rejected, a non-empty batch can
+    still legitimately produce an empty unit (an <code>Execute</code> that emits nothing,
+    or a coalesced unit where no instruction yielded output). So both fixes are needed
+    and neither subsumes the other.</p>
+
+  <h2>Approach</h2>
+
+  <h3>1 · Reject empty batches at the entrypoint</h3>
+  <p>The only path that can mint a zero-instruction batch is
+    <code>entrypoint.Handle(ctx, messages...)</code> (the <code>BlockingEntrypoint</code>).
+    The shedding path routes through <code>httpAdapter.Handle</code>, which calls
+    <code>await(ctx, message)</code> once per message — structurally always exactly one
+    instruction, never zero. So a single guard at the top of <code>Handle</code> is
+    sufficient and correct:</p>
+
+  <pre>func (this *entrypoint) Handle(ctx context.Context, messages ...any) {
+<ins>+	if len(messages) == 0 {
++		return // nothing to store; never enters the pipeline.
++	}</ins>
+	this.lock.RLock()
+	if this.closed {
+		...</pre>
+
+  <p>Returning immediately is consistent with the <code>BlockingEntrypoint</code> contract
+    ("returns only after a durable write"): there is nothing to write, so there is nothing
+    to wait for. No batch is pooled, no waiter is created, and crucially no abandonment
+    panic can arise — there is no in-flight work to abandon.</p>
+
+  <h3>2 · Forward empty units without writing / dispatching</h3>
+  <p>In both persistence and broadcast, short-circuit the store/dispatch when the unit
+    carries no result messages, but <strong>still forward the unit</strong> so its
+    completions fire downstream (this is what unblocks any waiting caller) and pooled
+    values are reclaimed at the terminal stage.</p>
+
+  <p>persistence (<code>03_persistence.go</code>):</p>
+  <pre>func (this *persistence) Listen() {
+	defer close(this.output)
+	for unit := range this.input {
+<ins>+		if len(unit.results) == 0 {
++			this.output <- unit // nothing to persist; already "stored" vacuously.
++			continue
++		}</ins>
+		for _, message := range unit.results {
+			this.buffer = append(this.buffer, message)
+		}
+		stored := this.store()
+		...
+		this.monitor.Track(monitoring.ResultsPersisted{Count: len(unit.results)})
+		this.output <- unit
+	}
+}</pre>
+
+  <p>broadcast (<code>05_broadcast.go</code>), symmetric, inside <code>processFrom</code>:</p>
+  <pre>func (this *broadcast) processFrom(input chan *unitOfWork) {
+	for unit := range input {
+<ins>+		if len(unit.results) == 0 {
++			this.output <- unit // nothing to dispatch; forward (already durable).
++			continue
++		}</ins>
+		for _, message := range unit.results {
+			this.buffer = append(this.buffer, message)
+		}
+		this.dispatch()
+		this.buffer = this.buffer[:0]
+		this.output <- unit
+	}
+}</pre>
+
+  <div class="callout good">
+    <strong>Buffer hygiene is preserved.</strong> Both buffers are reset (persistence via
+    <code>generic.Reclaim</code> after <code>store()</code>, broadcast via <code>[:0]</code>
+    after <code>dispatch()</code>) at the end of every non-empty iteration, so an empty
+    unit's early <code>continue</code> simply leaves a length-zero buffer untouched.
+    The single-goroutine-per-stage invariant is unchanged.
+  </div>
+
+  <h3>Resulting flow</h3>
+  <div class="add-svg">
+  <svg viewBox="0 0 900 250" width="100%" role="img" aria-label="Empty work skip paths">
+    <defs>
+      <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#5ab0f2"/>
+      </marker>
+      <marker id="arrG" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#5fc98f"/>
+      </marker>
+      <marker id="arrR" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#e8836f"/>
+      </marker>
+    </defs>
+    <!-- caller -->
+    <rect x="14" y="100" width="96" height="44" rx="7" fill="#1a212b" stroke="#2c3744"/>
+    <text x="62" y="120" fill="#d6dde6" font-size="12" text-anchor="middle">Handle(ctx)</text>
+    <text x="62" y="135" fill="#8a98a8" font-size="10" text-anchor="middle">caller</text>
+    <!-- entrypoint -->
+    <rect x="170" y="100" width="104" height="44" rx="7" fill="#1a212b" stroke="#2c3744"/>
+    <text x="222" y="120" fill="#d6dde6" font-size="12" text-anchor="middle">entrypoint</text>
+    <text x="222" y="135" fill="#8a98a8" font-size="10" text-anchor="middle">work chan</text>
+    <!-- execution -->
+    <rect x="334" y="100" width="104" height="44" rx="7" fill="#1a212b" stroke="#2c3744"/>
+    <text x="386" y="124" fill="#d6dde6" font-size="12" text-anchor="middle">execution</text>
+    <text x="386" y="137" fill="#8a98a8" font-size="9.5" text-anchor="middle">→ unitOfWork</text>
+    <!-- persistence -->
+    <rect x="498" y="100" width="104" height="44" rx="7" fill="#1a212b" stroke="#2c3744"/>
+    <text x="550" y="124" fill="#d6dde6" font-size="12" text-anchor="middle">persistence</text>
+    <text x="550" y="137" fill="#8a98a8" font-size="9.5" text-anchor="middle">store()</text>
+    <!-- broadcast -->
+    <rect x="662" y="100" width="104" height="44" rx="7" fill="#1a212b" stroke="#2c3744"/>
+    <text x="714" y="124" fill="#d6dde6" font-size="12" text-anchor="middle">broadcast</text>
+    <text x="714" y="137" fill="#8a98a8" font-size="9.5" text-anchor="middle">dispatch()</text>
+    <!-- terminal -->
+    <rect x="800" y="100" width="86" height="44" rx="7" fill="#1a212b" stroke="#2c3744"/>
+    <text x="843" y="124" fill="#d6dde6" font-size="12" text-anchor="middle">terminal</text>
+    <text x="843" y="137" fill="#8a98a8" font-size="9.5" text-anchor="middle">pool reclaim</text>
+
+    <!-- main arrows -->
+    <line x1="110" y1="122" x2="166" y2="122" stroke="#5ab0f2" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="274" y1="122" x2="330" y2="122" stroke="#5ab0f2" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="438" y1="122" x2="494" y2="122" stroke="#5ab0f2" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="602" y1="122" x2="658" y2="122" stroke="#5ab0f2" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="766" y1="122" x2="796" y2="122" stroke="#5ab0f2" stroke-width="2" marker-end="url(#arr)"/>
+
+    <!-- reject empty batch: loop back from entrypoint -->
+    <path d="M196,100 C190,60 130,60 124,98" fill="none" stroke="#e8836f" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#arrR)"/>
+    <text x="160" y="48" fill="#e8836f" font-size="10.5" text-anchor="middle">① len(msgs)==0 → return</text>
+
+    <!-- empty unit skip store -->
+    <path d="M550,144 C550,196 686,196 700,146" fill="none" stroke="#5fc98f" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#arrG)"/>
+    <text x="552" y="214" fill="#5fc98f" font-size="10.5" text-anchor="middle">② empty unit: skip store(), forward →</text>
+    <!-- empty unit skip dispatch -->
+    <path d="M714,144 C714,180 800,180 825,144" fill="none" stroke="#5fc98f" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#arrG)"/>
+    <text x="800" y="170" fill="#5fc98f" font-size="10.5" text-anchor="middle">skip dispatch()</text>
+  </svg>
+  </div>
+
+  <h2>Trade-offs &amp; open questions</h2>
+  <ul>
+    <li><strong>Counter semantics.</strong> Empty units will no longer emit
+      <code>ResultsPersisted{Count:0}</code> / <code>ResultsDispatched{Count:0}</code> —
+      which resolves the noise from branch-scan finding #2. If anyone wanted those zero
+      events as a "unit traversed the stage" heartbeat, this removes them. I believe that
+      is not the intent (the counters are throughput, not traversal), but worth confirming.</li>
+    <li><strong>Silent rejection of empty batches.</strong> <code>Handle(ctx)</code> with
+      no messages now returns with no observable trace. <em>Open question:</em> do we want
+      a monitoring event (e.g. an <code>EmptyBatchIgnored</code> counter) to make the
+      no-op visible, or is silent-and-free preferable? Default proposal: silent, since it
+      is a caller mistake with no consequence.</li>
+    <li><strong>Lost test coverage is restored, inverted.</strong> The deleted
+      <code>TestEmptyResultsTriggersEmptyWrite/Dispatch</code> tested the old behavior. We
+      replace them with tests asserting the <em>new</em> behavior (skip + forward), so the
+      empty path is pinned again — just to the opposite contract.</li>
+    <li><strong>No change to durability invariants.</strong> Empty units forward exactly
+      as before (they were always forwarded); we only drop the empty I/O call in between.
+      Nothing that was acknowledged-after-store changes ordering or acknowledgement.</li>
+  </ul>
+
+  <h2>Implementation checklist</h2>
+
+  <div class="phase">
+    <h3>Phase A — Reject empty batches <span class="tag t-edit">agent</span></h3>
+    <ul class="check">
+      <li class="red" style="text-decoration:line-through;opacity:.6">✔ Add <code>TestEmptyMessagesAreIgnored</code> to
+        <code>00_entrypoint_test.go</code>: call <code>Handle(ctx)</code> with no messages;
+        assert it returns immediately, nothing is sent on <code>work</code>, no waiter/batch
+        is taken from the pools, and no monitoring events are tracked.</li>
+      <li class="red" style="text-decoration:line-through;opacity:.6">✔ Run it — confirm it fails (the empty batch is currently enqueued).</li>
+      <li class="green" style="text-decoration:line-through;opacity:.6">✔ Add the <code>if len(messages) == 0 { return }</code> guard at the top
+        of <code>entrypoint.Handle</code>.</li>
+      <li class="green" style="text-decoration:line-through;opacity:.6">✔ Run the entrypoint tests — confirm green and no regressions.</li>
+    </ul>
+  </div>
+
+  <div class="phase">
+    <h3>Phase B — Persistence forwards empty units <span class="tag t-edit">agent</span></h3>
+    <p>The durability-sensitive twin: an empty unit must still be <strong>forwarded</strong>
+      (so its completions fire and any <code>BlockingEntrypoint</code> caller unblocks), yet
+      must <em>not</em> trigger <code>store()</code>. The guard sits <em>before</em> the
+      abandonment logic and must not change it.</p>
+    <ul class="check">
+      <li class="red" style="text-decoration:line-through;opacity:.6">✔ Add <code>TestEmptyResultsSkipsWriteButForwards</code> to
+        <code>03_persistence_test.go</code>: enqueue <code>&amp;unitOfWork{}</code>; assert
+        exactly one unit drains out of <code>output</code>, <code>writeCalls</code> is empty
+        (<code>should.BeEmpty</code>), and <code>tracked</code> contains no
+        <code>monitoring.ResultsPersisted</code>.</li>
+      <li class="red" style="text-decoration:line-through;opacity:.6">✔ Run it — confirm it fails (the current code calls
+        <code>writer.Write</code> with an empty buffer and tracks
+        <code>ResultsPersisted{Count:0}</code>).</li>
+      <li class="green" style="text-decoration:line-through;opacity:.6">✔ Add the <code>len(unit.results) == 0</code> skip-and-forward guard at
+        the top of the <code>for unit := range this.input</code> loop in
+        <code>persistence.Listen()</code>, before any buffering or <code>store()</code>.</li>
+      <li class="green" style="text-decoration:line-through;opacity:.6">✔ Run the persistence tests — confirm green, including
+        <code>TestPersistenceAbandonsOnContextCancelAndDropsUnit</code> and the
+        success-path counter tests.</li>
+    </ul>
+  </div>
+
+  <div class="phase">
+    <h3>Phase C — Broadcast forwards empty units <span class="tag t-edit">agent</span></h3>
+    <ul class="check">
+      <li class="red" style="text-decoration:line-through;opacity:.6">✔ Replace the intent of the deleted empty-dispatch test with
+        <code>TestEmptyResultsSkipsDispatchButForwards</code> in
+        <code>05_broadcast_test.go</code>: enqueue <code>&amp;unitOfWork{}</code>; assert the
+        unit is forwarded, <code>dispatchCalls</code> is empty, and no
+        <code>ResultsDispatched</code> is tracked.</li>
+      <li class="red" style="text-decoration:line-through;opacity:.6">✔ Run it — confirm it fails (dispatch is currently called with an empty buffer).</li>
+      <li class="green" style="text-decoration:line-through;opacity:.6">✔ Add the <code>len(unit.results) == 0</code> skip-and-forward guard in
+        <code>broadcast.processFrom</code>.</li>
+      <li class="green" style="text-decoration:line-through;opacity:.6">✔ Run the broadcast tests — confirm green, including
+        <code>TestStartupUnitsDispatchedBeforeInputUnits</code>.</li>
+    </ul>
+  </div>
+
+  <div class="phase">
+    <h3>Phase D — Full sweep <span class="tag t-edit">agent</span></h3>
+    <ul class="check">
+      <li class="green" style="text-decoration:line-through;opacity:.6">✔ Run <code>make test</code> (coverage + <code>-race</code>) — confirm the
+        whole suite is green. <em>(pipeline 100%, suite green, race clean)</em></li>
+      <li style="text-decoration:line-through;opacity:.6">✔ Confirm no remaining test still asserts the old empty-write/empty-dispatch behavior.</li>
+    </ul>
+  </div>
+
+  <h2>Files touched</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>File</th><th>Change</th><th>Owner</th></tr></thead>
+    <tbody>
+      <tr><td><code>internal/pipeline/00_entrypoint.go</code></td><td>Empty-messages guard in <code>Handle</code></td><td><span class="tag t-edit">agent</span></td></tr>
+      <tr><td><code>internal/pipeline/00_entrypoint_test.go</code></td><td>+ <code>TestEmptyMessagesAreIgnored</code></td><td><span class="tag t-edit">agent</span></td></tr>
+      <tr><td><code>internal/pipeline/05_broadcast.go</code></td><td>Skip-and-forward empty units</td><td><span class="tag t-edit">agent</span></td></tr>
+      <tr><td><code>internal/pipeline/05_broadcast_test.go</code></td><td>+ <code>TestEmptyResultsSkipsDispatchButForwards</code></td><td><span class="tag t-edit">agent</span></td></tr>
+      <tr><td><code>internal/pipeline/03_persistence.go</code></td><td>Skip-and-forward empty units</td><td><span class="tag t-edit">agent</span></td></tr>
+      <tr><td><code>internal/pipeline/03_persistence_test.go</code></td><td>+ <code>TestEmptyResultsSkipsWriteButForwards</code></td><td><span class="tag t-edit">agent</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="footer">
+    Proposal generated 2026-06-24 12:54:08 · branch <code>mikewhat/more-counters</code> ·
+    no production or test code will be written until you approve.
+  </div>
+
+</div>
+</body>
+</html>

@@ -29,6 +29,15 @@ type (
 	}
 	RecoveryAbandoned struct{ Attempts int }
 	RecoveryComplete  struct{ Count int }
+
+	// Throughput counters: each carries the count for one processed unit of work.
+	// ResultsPersisted and ResultsDispatched are not expected to match exactly:
+	// persistence drops a unit on shutdown-abandonment (so it is never dispatched),
+	// while broadcast always forwards already-durable work and additionally re-emits
+	// the recovered startup backlog — so dispatched legitimately exceeds persisted.
+	InstructionsHandled struct{ Count int } // execution: commands run per batch
+	ResultsPersisted    struct{ Count int } // persistence: messages durably written
+	ResultsDispatched   struct{ Count int } // broadcast: messages published downstream
 )
 
 var (

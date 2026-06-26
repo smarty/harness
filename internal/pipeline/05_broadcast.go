@@ -49,6 +49,10 @@ func (this *broadcast) Listen() {
 
 func (this *broadcast) processFrom(input chan *unitOfWork) {
 	for unit := range input {
+		if len(unit.results) == 0 {
+			this.output <- unit // nothing to dispatch; forward (already durable).
+			continue
+		}
 		for _, message := range unit.results {
 			this.buffer = append(this.buffer, message)
 		}
@@ -64,6 +68,7 @@ func (this *broadcast) dispatch() {
 	for attempt := 1; ; attempt++ {
 		err := this.dispatcher.Dispatch(this.ctx, this.buffer...)
 		if err == nil {
+			this.monitor.Track(monitoring.ResultsDispatched{Count: len(this.buffer)})
 			return
 		}
 		this.monitor.Track(monitoring.BroadcastError{

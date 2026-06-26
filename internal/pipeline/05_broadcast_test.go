@@ -84,7 +84,7 @@ func (this *BroadcastFixture) TestDispatchesAllResultsThenForwardsUnit() {
 	this.So(len(this.dispatchCalls), should.Equal, 1)
 	this.So(this.dispatchCalls[0], should.Equal, []*contracts.Message{m1, m2})
 	this.So(this.waits, should.BeEmpty)
-	this.So(this.tracked, should.BeEmpty)
+	this.So(this.tracked, should.Equal, []any{monitoring.ResultsDispatched{Count: 2}})
 }
 
 func (this *BroadcastFixture) TestEachUnitDispatchedIndependently() {
@@ -101,20 +101,10 @@ func (this *BroadcastFixture) TestEachUnitDispatchedIndependently() {
 	this.So(len(this.dispatchCalls), should.Equal, 2)
 	this.So(this.dispatchCalls[0], should.Equal, []*contracts.Message{m1})
 	this.So(this.dispatchCalls[1], should.Equal, []*contracts.Message{m2})
-	this.So(this.tracked, should.BeEmpty)
-}
-
-func (this *BroadcastFixture) TestEmptyResultsTriggersEmptyDispatch() {
-	this.input <- &unitOfWork{}
-	close(this.input)
-
-	go this.subject.Listen()
-
-	units := this.drain()
-	this.So(len(units), should.Equal, 1)
-	this.So(len(this.dispatchCalls), should.Equal, 1)
-	this.So(this.dispatchCalls[0], should.BeEmpty)
-	this.So(this.tracked, should.BeEmpty)
+	this.So(this.tracked, should.Equal, []any{
+		monitoring.ResultsDispatched{Count: 1},
+		monitoring.ResultsDispatched{Count: 1},
+	})
 }
 
 func (this *BroadcastFixture) TestRetriesUntilDispatchSucceeds() {
@@ -129,13 +119,14 @@ func (this *BroadcastFixture) TestRetriesUntilDispatchSucceeds() {
 	this.So(len(units), should.Equal, 1)
 	this.So(len(this.dispatchCalls), should.Equal, 3)
 	assertBackoffWaits(this.Fixture, this.waits, 2)
-	this.So(this.tracked, should.HaveLength, 2)
-	for n, observation := range this.tracked {
+	this.So(this.tracked, should.HaveLength, 3)
+	for n, observation := range this.tracked[:2] {
 		failure, ok := observation.(monitoring.BroadcastError)
 		this.So(ok, should.BeTrue)
 		this.So(failure.Error, should.WrapError, monitoring.ErrBroadcast)
 		this.So(failure.Attempt, should.Equal, n+1)
 	}
+	this.So(this.tracked[2], should.Equal, monitoring.ResultsDispatched{Count: 1})
 }
 
 func (this *BroadcastFixture) TestBroadcastAbandonsOnContextCancelButStillForwards() {
@@ -176,7 +167,54 @@ func (this *BroadcastFixture) TestStartupUnitsDispatchedBeforeInputUnits() {
 	this.So(len(this.dispatchCalls), should.Equal, 2)
 	this.So(this.dispatchCalls[0], should.Equal, []*contracts.Message{recovered})
 	this.So(this.dispatchCalls[1], should.Equal, []*contracts.Message{live})
-	this.So(this.tracked, should.BeEmpty)
+	this.So(this.tracked, should.Equal, []any{
+		monitoring.ResultsDispatched{Count: 1},
+		monitoring.ResultsDispatched{Count: 1},
+	})
+}
+
+func (this *BroadcastFixture) TestDispatchSuccessIsCounted() {
+	m1 := &contracts.Message{Value: "a"}
+	m2 := &contracts.Message{Value: "b"}
+	this.input <- &unitOfWork{results: []*contracts.Message{m1, m2}}
+	close(this.input)
+
+	go this.subject.Listen()
+
+	this.drain()
+	this.So(this.tracked, should.Equal, []any{monitoring.ResultsDispatched{Count: 2}})
+}
+
+func (this *BroadcastFixture) TestNothingDispatchedIsCountedOnAbandonment() {
+	this.dispatchFailCount = 1 << 30 // always fail
+	this.waitErr = context.Canceled
+	unit := &unitOfWork{results: []*contracts.Message{{Value: "abandoned"}}}
+	this.input <- unit
+	close(this.input)
+
+	go this.subject.Listen()
+
+	units := this.drain()
+	this.So(units, should.Equal, []*unitOfWork{unit}) // still forwarded: already durable
+	for _, observation := range this.tracked {
+		_, isCount := observation.(monitoring.ResultsDispatched)
+		this.So(isCount, should.BeFalse)
+	}
+}
+
+func (this *BroadcastFixture) TestEmptyResultsSkipsDispatchButForwards() {
+	this.input <- &unitOfWork{}
+	close(this.input)
+
+	go this.subject.Listen()
+
+	units := this.drain()
+	this.So(len(units), should.Equal, 1)
+	this.So(this.dispatchCalls, should.BeEmpty)
+	for _, observation := range this.tracked {
+		_, isCount := observation.(monitoring.ResultsDispatched)
+		this.So(isCount, should.BeFalse)
+	}
 }
 
 func (this *BroadcastFixture) TestClosedInputClosesOutput() {
