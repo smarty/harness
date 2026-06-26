@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `make build` — `make test` + `go build ./...`. CI runs this (`.github/workflows/build.yml`).
 - `make test.db` — runs the `storage/mysql` package tests against a real MySQL (30s timeout, with `-race`). These hit a live DB and are excluded by `-short`.
 - `make test.db.local` — `docker compose -f doc/docker-compose.yml up --wait`, then `make test.db`, then `docker compose down`. Use when no MySQL is already running.
+- `make test.mq` — runs the `dispatcher/rabbitmq` package tests against a real RabbitMQ (30s timeout, with `-race`). These hit a live broker and are excluded by `-short`.
+- `make test.mq.local` — `docker compose -f doc/docker-compose.yml up --wait`, then `make test.mq`, then `docker compose down`. Use when no RabbitMQ is already running.
 - Single test: `go test -run '^TestName$' ./internal/pipeline` (add `-race -count=1` to match `make test`).
 - Single subtest in this codebase's `gunit` style: `go test -run '^TestFixture$/^MethodName$' ./path`.
 
@@ -53,6 +55,14 @@ All database work flows through a single seam: `Options.Storage(...)` takes a `s
 
 - `internal/adapters` holds the thin `Writer`, `Dispatcher`, and `Recovery` types the pipeline wires from `config.Storage`. Each builds a table-agnostic `storage.*` operation and hands it to `Storage.Exec`. They are single-goroutine (one reusable op buffer each). `Dispatcher` rejects `ID == 0` before publishing (an unassigned id could never be marked and would republish forever). `Recovery` is the stateful keyset cursor (snapshot `MIN/MAX(id)` of undispatched rows on the first call, page within that frozen window, advance only after a clean page).
 - `storage/mysql.Mapper` implements `Storage` against the `Snapshots` and `Messages` tables in `doc/mysql/schema.sql`. It is **safe for concurrent use** (pooled statement buffers). Insert emits one multi-row INSERT per batch and derives IDs from `LAST_INSERT_ID() + i*stride` (relies on `innodb_autoinc_lock_mode = 2` "simple insert" semantics and `stride` matching the server's `auto_increment_increment`). `quoteTableName` validates table names against `^[A-Za-z0-9_]+$` and back-tick quotes them. `WithLegacyWrite(...)` is a deprecated transitional hook run inside the INSERT transaction.
+
+### Dispatcher seam (`contracts.Dispatcher` + bundled `dispatcher/rabbitmq`)
+
+`Options.Dispatcher(...)` takes a `contracts.Dispatcher` (`Dispatch(ctx, ...*Message) error`). Unlike the storage seam this one is **public** — callers may supply their own — but harness now ships a batteries-included default so the common case is one line, mirroring the `storage/mysql` precedent.
+
+- `dispatcher/rabbitmq.NewDispatcher(address string, options ...Option)` is the bundled default. It is the dispatcher analog of `storage/mysql`: a thin, direct implementation over the `github.com/rabbitmq/amqp091-go` driver (the version messaging/v3 pins) rather than a messaging framework. Configure it via the `Options` singleton — `Options.TLS(*tls.Config)` and `Options.Dialer(ContextDialer)` — the same `var Options singleton` shape used elsewhere in the module. `NewDispatcher` promotes `?username=&password=` query credentials into the URL userinfo (where amqp091 reads them, falling back to guest/guest otherwise) so a single messaging/v3-style `message_host` works for both the consumer and the dispatcher; userinfo wins on conflict, unparseable addresses pass through (`credentials.go`).
+- It owns a lazily established, long-lived transaction-mode channel: `Dispatch` ensures the channel (dial + open + `Tx()`), publishes each message as a **persistent** delivery to the exchange named by its `Type` (routing key `""`, fanout — exchanges are assumed to exist, never declared, matching messaging/v3), then `TxCommit()`s for a synchronous broker ack. It returns `nil` only after a clean commit. On **any** publish or commit failure it calls `reset()` (tears down channel + connection) and returns the error; the broadcast stage retries forever, so the next `Dispatch` reconnects. `Close()` (io.Closer, for dominoes shutdown) releases the cached channel and is a safe no-op when nothing is cached.
+- Driven by a single goroutine (the broadcast stage via `adapters.Dispatcher`, which still owns ID-rejection and mark-dispatched), so the cached channel and reused `[]amqp.Publishing` buffer need no locking — same one-goroutine discipline as the internal adapters. An internal `transport`/`channel` seam (real impl in `amqp.go`) lets the unit suite run broker-free against a fake; `live_test.go` (skipped under `-short`) round-trips against a real broker via `make test.mq`.
 
 ### Snapshots & replay (`snapshots/`, `internal/domainscan/`)
 
