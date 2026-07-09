@@ -3,6 +3,9 @@ package pipeline
 import (
 	"bytes"
 	"context"
+	"maps"
+	"reflect"
+	"slices"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/adapters"
@@ -37,7 +40,7 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 		SheddingEntrypoint:  adapter,
 		BlockingEntrypoint:  entrypoint,
 		Listeners: []contracts.Listener{
-			newRecovery(ctx, adapters.NewRecovery(config.Storage), recoveryBatchSize, work4a, wait, config.Monitor),
+			newRecovery(ctx, adapters.NewRecovery(config.Storage, messageTypeNames(config.MessageTypes)), recoveryBatchSize, work4a, wait, config.Monitor),
 			entrypoint,
 			newExecution(
 				config.Monitor,
@@ -59,6 +62,13 @@ func Build(ctx context.Context, config Configuration) (result contracts.Pipeline
 		},
 	}
 	return result, nil
+}
+
+// messageTypeNames extracts the stored type names that scope startup recovery:
+// the map's values, sorted and deduplicated (two Go types may legitimately
+// share a stored name). An empty map yields nil, leaving recovery unscoped.
+func messageTypeNames(messageTypes map[reflect.Type]string) (results []string) {
+	return slices.Compact(slices.Sorted(maps.Values(messageTypes)))
 }
 
 const (

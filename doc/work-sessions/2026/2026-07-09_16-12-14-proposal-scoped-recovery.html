@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal: Type-Scoped Recovery</title>
+<style>
+    :root {
+        --ink: #1a2330;
+        --muted: #5a6675;
+        --accent: #0b5fa5;
+        --accent-soft: #e8f1f9;
+        --warn: #8a5a00;
+        --warn-soft: #fdf3df;
+        --ok: #1d6b3a;
+        --ok-soft: #e9f5ee;
+        --red: #9d2b2b;
+        --red-soft: #fbeaea;
+        --line: #d8dee6;
+        --code-bg: #f4f6f8;
+    }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0 auto;
+        max-width: 60rem;
+        padding: 2.5rem 2rem 5rem;
+        font-family: "Charter", "Georgia", serif;
+        font-size: 17px;
+        line-height: 1.55;
+        color: var(--ink);
+        background: #fdfdfc;
+    }
+    h1, h2, h3, h4 { font-family: "Avenir Next", "Helvetica Neue", Arial, sans-serif; line-height: 1.2; }
+    h1 { font-size: 1.9rem; margin-bottom: 0.25rem; }
+    h2 { font-size: 1.35rem; margin-top: 2.75rem; border-bottom: 2px solid var(--accent); padding-bottom: 0.3rem; }
+    h3 { font-size: 1.1rem; margin-top: 2rem; color: var(--accent); }
+    .subtitle { color: var(--muted); font-size: 1rem; margin-top: 0; }
+    code, pre {
+        font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+        font-size: 0.85em;
+    }
+    code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+    pre {
+        background: var(--code-bg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 1rem 1.25rem;
+        overflow-x: auto;
+        line-height: 1.45;
+    }
+    pre code { background: none; padding: 0; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.95rem; }
+    th, td { border: 1px solid var(--line); padding: 0.5rem 0.75rem; text-align: left; vertical-align: top; }
+    th { background: var(--accent-soft); font-family: "Avenir Next", "Helvetica Neue", Arial, sans-serif; font-size: 0.85rem; }
+    .callout {
+        border-left: 4px solid var(--accent);
+        background: var(--accent-soft);
+        padding: 0.75rem 1.25rem;
+        border-radius: 0 8px 8px 0;
+        margin: 1.25rem 0;
+    }
+    .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+    .callout.decision { border-color: var(--ok); background: var(--ok-soft); }
+    .callout h4 { margin: 0 0 0.4rem; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    .phase {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        margin: 1.5rem 0;
+        overflow: hidden;
+    }
+    .phase > header {
+        background: var(--accent-soft);
+        padding: 0.6rem 1.25rem;
+        font-family: "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+        font-weight: 600;
+    }
+    .phase > div { padding: 0.25rem 1.5rem 1rem; }
+    ul.checklist { list-style: none; padding-left: 0.25rem; }
+    ul.checklist li { margin: 0.55rem 0; padding-left: 1.9rem; position: relative; }
+    ul.checklist li::before {
+        content: "☐";
+        position: absolute;
+        left: 0;
+        top: 0;
+        font-size: 1.05rem;
+        color: var(--accent);
+    }
+    ul.checklist li.done::before { content: "☑"; color: var(--ok); }
+    .tag { display: inline-block; font-family: "Avenir Next", Arial, sans-serif; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; padding: 0.1rem 0.5rem; border-radius: 999px; margin-right: 0.35rem; vertical-align: 1px; }
+    .tag.red { background: var(--red-soft); color: var(--red); }
+    .tag.green { background: var(--ok-soft); color: var(--ok); }
+    .tag.run { background: var(--code-bg); color: var(--muted); border: 1px solid var(--line); }
+    .diagram-wrap { overflow-x: auto; margin: 1.5rem 0; }
+    figcaption { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top: 0.5rem; }
+    .meta { color: var(--muted); font-size: 0.85rem; font-family: "Avenir Next", Arial, sans-serif; }
+    del { color: var(--red); background: var(--red-soft); text-decoration-color: var(--red); }
+    ins { color: var(--ok); background: var(--ok-soft); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<h1>Type-Scoped Recovery</h1>
+<p class="subtitle">Scope the startup recovery backlog to the message types registered at wireup time.</p>
+<p class="meta">2026-07-09 &middot; branch <code>mikewhat/scoped-recovery</code> &middot; status: <strong>IMPLEMENTED — all checklist items complete (2026-07-09)</strong></p>
+
+<h2>Background</h2>
+
+<p>
+At startup, the recovery station republishes every stored-but-undispatched message: <code>adapters.Recovery</code>
+snapshots <code>MIN(id)/MAX(id)</code> of rows <code>WHERE dispatched IS NULL</code>, then pages that frozen window
+in id order. Both queries are <strong>type-blind</strong> — they consider every row in the <code>Messages</code> table.
+</p>
+
+<p>
+Meanwhile, the pipeline already knows exactly which message types it owns: <code>Options.MessageTypes(map[reflect.Type]string)</code>
+supplies the stored type names the execution stage stamps onto every message it produces
+(<code>internal/pipeline/01_execution.go:70</code>). Nothing this pipeline instance writes can carry a type name outside that map's values.
+</p>
+
+<p>Type-blind recovery misbehaves whenever the <code>Messages</code> table contains rows this instance did not write and does not own:</p>
+
+<ul>
+    <li><strong>Shared tables.</strong> If another application (or an older revision of this one) leaves undispatched rows
+        of foreign types, this instance republishes them through <em>its</em> dispatcher — messages it never agreed to own,
+        possibly to the wrong exchange, possibly types its consumers cannot parse.</li>
+    <li><strong>Poisoned windows.</strong> A single ancient undispatched foreign row pins <code>MIN(id)</code> near zero,
+        so every page query scans an enormous dead prefix. A foreign row also flips <code>Found</code> to true when this
+        instance's own backlog is actually empty, forcing pointless page queries before live traffic is served — and recovery
+        stalls the whole pipeline by design.</li>
+    <li><strong>Precedent already exists.</strong> The snapshot-replay path solved this same problem the same way:
+        <code>LoadEventsSince</code> takes a set of stored type names and queries <code>WHERE type IN (...)</code>.
+        Recovery is the last type-blind reader.</li>
+</ul>
+
+<p>
+Prior sessions established the pieces this builds on: the paged keyset-cursor recovery
+(<code>2026-06-12 f7-paged-recovery</code>) and routing recovery through the <code>storage.Storage</code> seam
+(<code>2026-06-16 recovery-storage-db-routing</code>).
+</p>
+
+<h2>Approach</h2>
+
+<p>
+Thread the configured type names from <code>Configuration.MessageTypes</code> down to the two recovery SQL queries.
+Four small changes along one existing seam — no new options, no schema change, no new interfaces.
+</p>
+
+<div class="diagram-wrap">
+<figure style="margin:0;">
+<svg viewBox="0 0 920 300" width="920" height="300" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="13">
+    <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+            <path d="M0,0 L10,4 L0,8 z" fill="#5a6675"/>
+        </marker>
+    </defs>
+
+    <!-- Box 1: Options.MessageTypes -->
+    <rect x="20" y="30" width="200" height="70" rx="8" fill="#e8f1f9" stroke="#0b5fa5" stroke-width="1.5"/>
+    <text x="120" y="55" text-anchor="middle" font-weight="600">Options.MessageTypes</text>
+    <text x="120" y="75" text-anchor="middle" fill="#5a6675" font-size="12">map[reflect.Type]string</text>
+    <text x="120" y="91" text-anchor="middle" fill="#5a6675" font-size="12">(existing option — unchanged)</text>
+
+    <!-- Box 2: pipeline.Build -->
+    <rect x="290" y="30" width="220" height="70" rx="8" fill="#fff" stroke="#0b5fa5" stroke-width="1.5"/>
+    <text x="400" y="55" text-anchor="middle" font-weight="600">pipeline.Build</text>
+    <text x="400" y="75" text-anchor="middle" fill="#1d6b3a" font-size="12">+ sorted, deduped names from</text>
+    <text x="400" y="91" text-anchor="middle" fill="#1d6b3a" font-size="12">the map's values → []string</text>
+
+    <!-- Box 3: adapters.Recovery -->
+    <rect x="580" y="30" width="220" height="70" rx="8" fill="#fff" stroke="#0b5fa5" stroke-width="1.5"/>
+    <text x="690" y="55" text-anchor="middle" font-weight="600">adapters.NewRecovery(db, types)</text>
+    <text x="690" y="75" text-anchor="middle" fill="#1d6b3a" font-size="12">+ holds the []string scope, sets it</text>
+    <text x="690" y="91" text-anchor="middle" fill="#1d6b3a" font-size="12">on every bounds &amp; page op</text>
+
+    <!-- Box 4: operations -->
+    <rect x="290" y="170" width="220" height="90" rx="8" fill="#fff" stroke="#0b5fa5" stroke-width="1.5"/>
+    <text x="400" y="195" text-anchor="middle" font-weight="600">internal/storage ops</text>
+    <text x="400" y="215" text-anchor="middle" fill="#1d6b3a" font-size="12">+ LoadUndispatchedBounds.Types</text>
+    <text x="400" y="231" text-anchor="middle" fill="#1d6b3a" font-size="12">+ LoadUndispatchedPage.Types</text>
+    <text x="400" y="249" text-anchor="middle" fill="#5a6675" font-size="12">empty slice ⇒ unscoped (legacy)</text>
+
+    <!-- Box 5: mysql.Mapper -->
+    <rect x="580" y="170" width="270" height="90" rx="8" fill="#fff" stroke="#0b5fa5" stroke-width="1.5"/>
+    <text x="715" y="195" text-anchor="middle" font-weight="600">storage/mysql.Mapper</text>
+    <text x="715" y="217" text-anchor="middle" fill="#1d6b3a" font-size="12" font-family="SF Mono, Menlo, monospace">+ AND type IN (?, ?, …)</text>
+    <text x="715" y="235" text-anchor="middle" fill="#5a6675" font-size="12">on both recovery queries,</text>
+    <text x="715" y="251" text-anchor="middle" fill="#5a6675" font-size="12">via the pooled statement builder</text>
+
+    <!-- Arrows -->
+    <line x1="220" y1="65" x2="286" y2="65" stroke="#5a6675" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="510" y1="65" x2="576" y2="65" stroke="#5a6675" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="640" y1="100" x2="514" y2="203" stroke="#5a6675" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="510" y1="215" x2="576" y2="215" stroke="#5a6675" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <text x="565" y="130" text-anchor="middle" fill="#5a6675" font-size="12" transform="rotate(-38 565 145)">builds ops</text>
+    <text x="543" y="207" text-anchor="middle" fill="#5a6675" font-size="12"></text>
+</svg>
+<figcaption>Green additions ride the existing <code>MessageTypes → Build → Recovery → Storage.Exec → Mapper</code> path.</figcaption>
+</figure>
+</div>
+
+<h3>1. Operation contracts — <code>internal/storage/operations.go</code></h3>
+
+<p>Both recovery operations gain a <code>Types</code> field. Documented semantics: a non-empty slice scopes the query to those stored type names; an empty slice means unscoped (today's behavior).</p>
+
+<pre><code>// LoadUndispatchedBounds reports the id range of the undispatched backlog,
+// optionally scoped to the given stored type names (empty Types = all types).
+type LoadUndispatchedBounds struct {
+    Types []string // sorted stored type names to scope to; empty = unscoped
+    Found bool
+    Min   uint64
+    Max   uint64
+}
+
+// LoadUndispatchedPage loads up to Limit undispatched messages in id order
+// within the half-open window (AfterID, ThroughID], optionally scoped to the
+// given stored type names (empty Types = all types).
+type LoadUndispatchedPage struct {
+    Types     []string
+    AfterID   uint64
+    ThroughID uint64
+    Limit     int
+    Messages  []*contracts.Message
+}</code></pre>
+
+<div class="callout decision">
+<h4>Decision: <code>[]string</code>, not <code>map[string]struct{}</code></h4>
+<p><code>LoadEventsSince</code> uses a set and re-sorts it inside the Mapper on every call. Recovery issues the page
+query repeatedly while draining a large backlog, and the scope never changes after wireup — so the adapter
+sorts and dedupes <em>once</em> in its constructor and hands the Mapper a stable, ready-to-bind slice. Deterministic
+argument order also makes assertions trivial. (Happy to switch to the set form for consistency if you prefer.)</p>
+</div>
+
+<h3>2. Adapter — <code>internal/adapters/recovery.go</code></h3>
+
+<pre><code>func NewRecovery(db storage.Storage, types []string) *Recovery {
+    return &amp;Recovery{db: db, types: slices.Compact(slices.Sorted(slices.Values(types)))}
+}</code></pre>
+
+<p><code>snapshot</code> and <code>page</code> set <code>op.Types = this.types</code> on the ops they already build. The cursor logic is untouched: bounds and pages both see the same filtered universe, so the frozen-window invariants (advance only after a clean page, empty page = done) hold exactly as before, just over a smaller set of rows.</p>
+
+<h3>3. Wiring — <code>internal/pipeline/pipeline.go</code></h3>
+
+<pre><code>newRecovery(ctx,
+    adapters.NewRecovery(config.Storage, messageTypeNames(config.MessageTypes)),
+    recoveryBatchSize, work4a, wait, config.Monitor),</code></pre>
+
+<p>where <code>messageTypeNames</code> is a small helper returning the map's <em>values</em> (the stored names), sorted and deduplicated — duplicates are possible since two Go types may legitimately share a stored name.</p>
+
+<h3>4. SQL — <code>storage/mysql/mapper.go</code></h3>
+
+<p>Both queries append <code>AND type IN (?, …)</code> when <code>len(op.Types) &gt; 0</code>. Because the IN-list makes the SQL dynamic, both methods move onto the pooled statement builder already used by <code>markMessagesDispatched</code> and <code>loadEventsSince</code>:</p>
+
+<pre><code>SELECT MIN(id), MAX(id)              SELECT id, type, payload
+  FROM `Messages`                      FROM `Messages`
+ WHERE dispatched IS NULL             WHERE dispatched IS NULL
+   AND type IN (?, ?)                   AND type IN (?, ?)
+                                        AND id &gt; ? AND id &lt;= ?
+                                      ORDER BY id
+                                      LIMIT ?</code></pre>
+
+<p>Page-loop termination stays correct under filtering: <code>LIMIT</code> counts <em>matching</em> rows, the cursor advances to the last returned id, and an empty page still means no matching rows remain in the window.</p>
+
+<div class="callout decision">
+<h4>Decision: empty <code>MessageTypes</code> ⇒ unscoped recovery (backward compatible)</h4>
+<p>When no <code>MessageTypes</code> are configured, recovery behaves exactly as today. Rationale: (a) inert/test
+pipelines built with zero options keep working; (b) an app that never configured <code>MessageTypes</code> persists
+rows with <code>type = ''</code> (the map-miss zero value), and unscoped recovery still picks those up. The strict
+alternative — scoping to the literal empty-string type — punishes legacy configs for no safety gain, and the
+sharp alternative — failing validation when <code>MessageTypes</code> is empty — would break every existing
+minimal wireup. Scoping is therefore effectively opt-in via the option production apps already set.</p>
+</div>
+
+<h2>Trade-offs &amp; Open Questions</h2>
+
+<div class="callout warn">
+<h4>⚠ Behavior change: rows outside the scope become invisible to recovery</h4>
+<p>Once deployed with <code>MessageTypes</code> configured, undispatched rows whose stored type is <em>not</em>
+in the configured set are never republished by this instance — including rows written as <code>type = ''</code>
+by a pre-<code>MessageTypes</code> deployment, rows from a since-renamed type, and rows produced by a domain
+value missing from the map. That is the point of the feature, but it converts "eventually recovered" into
+"sits undispatched forever." <strong>Deployment note:</strong> before rolling out, confirm the configured names
+cover every type the app has <em>ever</em> written that could still be undispatched (or drain the backlog first).</p>
+</div>
+
+<table>
+<tr><th>Concern</th><th>Assessment</th></tr>
+<tr>
+    <td>Index support</td>
+    <td><code>ix_messages_dispatched (dispatched, id)</code> does not cover <code>type</code>, so the type filter is applied
+        after the index narrows to undispatched rows. Worst case, a page scans a window full of foreign-type rows.
+        Recovery is startup-only and the backlog is normally small, so I propose <strong>no schema change now</strong>;
+        if a shared-table deployment ever hurts, an index on <code>(dispatched, type, id)</code> is a follow-up.</td>
+</tr>
+<tr>
+    <td>Unmapped produced values</td>
+    <td>The execution stage still stamps <code>type = ''</code> for values absent from <code>MessageTypes</code>, and those
+        rows will now never recover. Validating "every value a handler can produce has a name" statically is impossible
+        (handlers emit <code>any</code>); out of scope here, worth a future guard in the serialization stage if desired.</td>
+</tr>
+<tr>
+    <td>IN-list size</td>
+    <td>Type counts are small (tens, not thousands); no statement-length or plan-cache concern. Sorted names keep the
+        generated SQL text identical across calls.</td>
+</tr>
+<tr>
+    <td>Inconsistency with <code>LoadEventsSince</code></td>
+    <td>That op takes <code>map[string]struct{}</code> and <em>errors</em> on empty; the recovery ops take <code>[]string</code>
+        and treat empty as unscoped. The differing empty-semantics are deliberate (replay without registered events is a
+        programming error; recovery without <code>MessageTypes</code> is a supported legacy config) and will be documented
+        on the op structs. Unifying the collection types is possible follow-up polish, not part of this change.</td>
+</tr>
+</table>
+
+<h2>Implementation Checklist</h2>
+
+<p class="meta">Legend: <span class="tag red">RED</span> write a failing test &nbsp; <span class="tag green">GREEN</span> make it pass &nbsp; <span class="tag run">RUN</span> verification command. Unit phases use <code>make test</code>; Mapper phases need MySQL — you'll ensure docker is up, I run <code>make test.db</code>.</p>
+
+<div class="phase">
+<header>Phase 1 — Operation contracts &amp; adapter scope</header>
+<div>
+<ul class="checklist">
+    <li class="done"><span class="tag red">RED</span> In <code>internal/adapters/recovery_test.go</code>: extend <code>fakeRecoveryDB</code> to capture the first <code>LoadUndispatchedBounds</code> op; change <code>Setup</code> to <code>NewRecovery(this.db, []string{"order-received", "order-approved", "order-received"})</code> (unsorted, with a duplicate — on purpose); add <code>TestBoundsQueryCarriesSortedDedupedTypeScope</code> and <code>TestPageQueryCarriesSortedDedupedTypeScope</code> asserting both ops carry <code>[]string{"order-approved", "order-received"}</code>.</li>
+    <li class="done"><span class="tag run">RUN</span> <code>go test ./internal/adapters/ | tail -20</code> — fails to compile (<code>NewRecovery</code> arity, missing <code>Types</code> field): red for the right reason.</li>
+    <li class="done"><span class="tag green">GREEN</span> Add <code>Types []string</code> to <code>LoadUndispatchedBounds</code> and <code>LoadUndispatchedPage</code> in <code>internal/storage/operations.go</code>, with doc comments stating empty = unscoped.</li>
+    <li class="done"><span class="tag green">GREEN</span> Change <code>NewRecovery(db storage.Storage, types []string)</code> to store <code>slices.Compact(slices.Sorted(slices.Values(types)))</code>; set <code>op.Types</code> in both <code>snapshot()</code> and <code>page()</code>.</li>
+    <li class="done"><span class="tag green">GREEN</span> Keep the build compiling: update the call site in <code>internal/pipeline/pipeline.go</code> to pass <code>nil</code> for now (behavior unchanged: nil = unscoped; real wiring lands in Phase 3).</li>
+    <li class="done"><span class="tag run">RUN</span> <code>go test ./internal/adapters/ | tail -20</code> — green.</li>
+    <li class="done"><span class="tag run">RUN</span> <code>make test | tail -30</code> — whole module still green.</li>
+</ul>
+</div>
+</div>
+
+<div class="phase">
+<header>Phase 2 — Mapper applies the scope (integration, MySQL)</header>
+<div>
+<ul class="checklist">
+    <li class="done"><span class="tag red">RED</span> In <code>storage/mysql/mapper_load_undispatched_bounds_test.go</code>: add tests seeding undispatched rows of mixed types — scoped bounds computes <code>Min/Max</code> over matching types only; reports <code>Found == false</code> when only foreign-type rows are undispatched; empty <code>Types</code> preserves today's unscoped result (existing tests double as this guard).</li>
+    <li class="done"><span class="tag red">RED</span> In <code>storage/mysql/mapper_load_undispatched_page_test.go</code>: add tests — scoped page excludes foreign-type rows; <code>Limit</code> counts matching rows only (foreign rows interleaved between matches don't consume the limit); empty <code>Types</code> stays unscoped.</li>
+    <li class="done"><span class="tag run">RUN</span> <code>make test.db | tail -30</code> (MySQL up via docker) — new tests fail on assertions, existing tests still pass: red for the right reason.</li>
+    <li class="done"><span class="tag green">GREEN</span> Rework <code>loadUndispatchedBounds</code> and <code>loadUndispatchedPage</code> in <code>storage/mysql/mapper.go</code> onto the pooled statement builder; append <code>AND type IN (?, …)</code> binding <code>op.Types</code> when non-empty.</li>
+    <li class="done"><span class="tag run">RUN</span> <code>make test.db | tail -30</code> — green.</li>
+    <li class="done"><span class="tag run">RUN</span> <code>make test | tail -30</code> — unit suite unaffected (the <code>test.db</code> target runs the full unit suite as a prerequisite; both passed in the same run).</li>
+</ul>
+</div>
+</div>
+
+<div class="phase">
+<header>Phase 3 — Pipeline wiring: MessageTypes → recovery scope</header>
+<div>
+<ul class="checklist">
+    <li class="done"><span class="tag red">RED</span> In <code>internal/pipeline</code> (the <code>PipelineFixture</code> is already the <code>Storage</code> fake): set <code>MessageTypes</code> in the fixture's <code>Configuration</code> (two entries whose values arrive unsorted), capture the <code>*storage.LoadUndispatchedBounds</code> op in <code>Exec</code>, and assert recovery's bounds query carries the sorted stored names.</li>
+    <li class="done"><span class="tag run">RUN</span> <code>go test -run '^TestPipelineFixture$' ./internal/pipeline/ | tail -20</code> — fails (scope is still <code>nil</code>): red for the right reason.</li>
+    <li class="done"><span class="tag green">GREEN</span> Add the <code>messageTypeNames(map[reflect.Type]string) []string</code> helper (sorted, deduped values) in <code>internal/pipeline/pipeline.go</code> and replace the Phase-1 <code>nil</code> at the <code>adapters.NewRecovery</code> call site.</li>
+    <li class="done"><span class="tag run">RUN</span> <code>make test | tail -30</code> — green.</li>
+</ul>
+</div>
+</div>
+
+<div class="phase">
+<header>Phase 4 — Documentation &amp; final verification</header>
+<div>
+<ul class="checklist">
+    <li class="done">Update the <code>Options.MessageTypes</code> doc comment in <code>config.go</code>: the names now also scope startup recovery; omitting the option leaves recovery unscoped.</li>
+    <li class="done">Update the <code>adapters.Recovery</code> type comment (backlog = undispatched rows <em>of the configured types</em>).</li>
+    <li class="done">Update <code>CLAUDE.md</code> (storage-seam bullet on <code>Recovery</code>) and <code>README.md</code>'s recovery paragraph/table to mention type scoping and the deployment caveat for pre-existing out-of-scope rows.</li>
+    <li class="done"><span class="tag run">RUN</span> <code>make build | tail -30</code> — full CI-equivalent gate.</li>
+    <li class="done"><span class="tag run">RUN</span> <code>make test.db | tail -30</code> — final integration pass.</li>
+</ul>
+</div>
+</div>
+
+<h2>Out of Scope</h2>
+<ul>
+    <li>Schema changes (the optional <code>(dispatched, type, id)</code> index).</li>
+    <li>Guarding against produced values missing from <code>MessageTypes</code> (rows stamped <code>type = ''</code>).</li>
+    <li>Unifying the <code>Types</code> collection shape with <code>LoadEventsSince</code>.</li>
+    <li>Scoping <code>MarkMessagesDispatched</code> or any write path — writes are already inherently scoped to what this instance produced.</li>
+</ul>
+
+</body>
+</html>
