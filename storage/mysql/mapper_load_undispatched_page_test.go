@@ -10,8 +10,8 @@ import (
 
 /* Tests and utilities for LoadUndispatchedPage operation */
 
-func (this *MapperFixture) loadPage(afterID, throughID uint64, limit int) *storage.LoadUndispatchedPage {
-	op := &storage.LoadUndispatchedPage{AfterID: afterID, ThroughID: throughID, Limit: limit}
+func (this *MapperFixture) loadPage(afterID, throughID uint64, limit int, types ...string) *storage.LoadUndispatchedPage {
+	op := &storage.LoadUndispatchedPage{Types: types, AfterID: afterID, ThroughID: throughID, Limit: limit}
 	this.So(this.subject.Exec(this.ctx, op), should.BeNil)
 	return op
 }
@@ -59,6 +59,28 @@ func (this *MapperFixture) TestLoadUndispatchedPage_MapsRowFields() {
 	this.So(message.ContentType, should.Equal, "application/json")
 	this.So(message.Content.Bytes(), should.Equal, []byte(`{"order":1}`))
 	this.So(message.Value, should.BeNil)
+}
+
+func (this *MapperFixture) TestLoadUndispatchedPage_ScopedToTypes_ExcludesForeignTypes() {
+	id1 := this.seedUndispatchedPayload("order-received", `{}`)
+	_ = this.seedUndispatchedPayload("foreign-type", `{}`)
+	id3 := this.seedUndispatchedPayload("order-approved", `{}`)
+	last := this.seedUndispatchedPayload("foreign-type", `{}`)
+
+	op := this.loadPage(0, last, 64, "order-approved", "order-received")
+
+	this.So(idsOf(op.Messages), should.Equal, []uint64{id1, id3})
+}
+
+func (this *MapperFixture) TestLoadUndispatchedPage_ScopedToTypes_LimitCountsMatchingRowsOnly() {
+	id1 := this.seedUndispatchedPayload("order-received", `{}`)
+	_ = this.seedUndispatchedPayload("foreign-type", `{}`) // interleaved: must not consume the limit
+	id3 := this.seedUndispatchedPayload("order-received", `{}`)
+	last := this.seedUndispatchedPayload("order-received", `{}`)
+
+	op := this.loadPage(0, last, 2, "order-received")
+
+	this.So(idsOf(op.Messages), should.Equal, []uint64{id1, id3})
 }
 
 func idsOf(messages []*contracts.Message) (results []uint64) {

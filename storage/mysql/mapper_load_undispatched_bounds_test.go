@@ -9,8 +9,8 @@ import (
 
 /* Tests and utilities for LoadUndispatchedBounds operations */
 
-func (this *MapperFixture) loadBounds() *storage.LoadUndispatchedBounds {
-	op := new(storage.LoadUndispatchedBounds)
+func (this *MapperFixture) loadBounds(types ...string) *storage.LoadUndispatchedBounds {
+	op := &storage.LoadUndispatchedBounds{Types: types}
 	this.So(this.subject.Exec(this.ctx, op), should.BeNil)
 	return op
 }
@@ -50,4 +50,28 @@ func (this *MapperFixture) TestLoadUndispatchedBounds_SpansOnlyUndispatchedRows(
 	this.So(op.Found, should.BeTrue)
 	this.So(op.Min, should.Equal, first)
 	this.So(op.Max, should.Equal, last)
+}
+
+func (this *MapperFixture) TestLoadUndispatchedBounds_ScopedToTypes_SpansOnlyMatchingRows() {
+	_ = this.seedUndispatchedPayload("foreign-type", `{}`) // lower id: must not lower Min
+	first := this.seedUndispatchedPayload("order-received", `{}`)
+	last := this.seedUndispatchedPayload("order-approved", `{}`)
+	_ = this.seedUndispatchedPayload("foreign-type", `{}`) // higher id: must not raise Max
+
+	op := this.loadBounds("order-approved", "order-received")
+
+	this.So(op.Found, should.BeTrue)
+	this.So(op.Min, should.Equal, first)
+	this.So(op.Max, should.Equal, last)
+}
+
+func (this *MapperFixture) TestLoadUndispatchedBounds_ScopedToTypes_OnlyForeignTypes_NotFound() {
+	_ = this.seedUndispatchedPayload("foreign-type", `{}`)
+	_ = this.seedUndispatchedPayload("another-foreign-type", `{}`)
+
+	op := this.loadBounds("order-received")
+
+	this.So(op.Found, should.BeFalse)
+	this.So(op.Min, should.Equal, uint64(0))
+	this.So(op.Max, should.Equal, uint64(0))
 }

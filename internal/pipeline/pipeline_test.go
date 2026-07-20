@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -33,6 +34,7 @@ type PipelineFixture struct {
 	writeLock     sync.Mutex
 	nextID        uint64
 	writeCalls    [][]*contracts.Message
+	recoveryScope []string
 	dispatchLock  sync.Mutex
 	dispatchCalls [][]*contracts.Message
 
@@ -46,12 +48,17 @@ func (this *PipelineFixture) Setup() {
 	this.ctx = context.WithValue(this.Context(), "testing", this.Name())
 	var err error
 	this.pipeline, err = Build(this.ctx, Configuration{
-		Monitor:                this,
-		Clock:                  time.Now,
-		Storage:                this,
-		Serializer:             this,
-		Dispatcher:             this,
-		Decorator:              this,
+		Monitor:    this,
+		Clock:      time.Now,
+		Storage:    this,
+		Serializer: this,
+		Dispatcher: this,
+		Decorator:  this,
+		// Values deliberately unsorted so the recovery-scope assertion proves sorting.
+		MessageTypes: map[reflect.Type]string{
+			reflect.TypeOf(""): "zeta-type",
+			reflect.TypeOf(0):  "alpha-type",
+		},
 		DomainTypes:            []any{this},
 		BurstCapacity:          1024,
 		PipelineBufferCapacity: 4,
@@ -102,11 +109,16 @@ func (this *PipelineFixture) ContentType() string { return "" }
 // Dispatcher's id!=0 guard is satisfied) and captures each persisted batch.
 func (this *PipelineFixture) Exec(ctx context.Context, operation any) error {
 	this.So(ctx.Value("testing"), should.Equal, this.Name())
-	if op, ok := operation.(*storage.InsertMessages); ok {
+	switch op := operation.(type) {
+	case *storage.InsertMessages:
 		this.writeLock.Lock()
 		defer this.writeLock.Unlock()
 		this.nextID = assignTestIDs(this.nextID, op.Messages)
 		this.writeCalls = append(this.writeCalls, deepCopy(op.Messages)) // messages are pooled; copy before the call returns
+	case *storage.LoadUndispatchedBounds:
+		this.writeLock.Lock()
+		defer this.writeLock.Unlock()
+		this.recoveryScope = append([]string(nil), op.Types...)
 	}
 	return nil
 }
@@ -236,6 +248,12 @@ func (this *PipelineFixture) TestPipelineShutsDownWithNoTraffic() {
 	this.So(len(this.writeCalls), should.Equal, 0)
 	this.So(len(this.dispatchCalls), should.Equal, 0)
 	this.So(this.tracked, should.Equal, []any{monitoring.RecoveryComplete{Count: 0}})
+}
+
+func (this *PipelineFixture) TestRecoveryScopedToSortedConfiguredMessageTypeNames() {
+	this.shutdown() // waits for every listener, so the recovery bounds query has been captured
+
+	this.So(this.recoveryScope, should.Equal, []string{"alpha-type", "zeta-type"})
 }
 
 func (this *PipelineFixture) TestPipelineSerializesEachBroadcastResult() {

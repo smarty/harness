@@ -2,30 +2,38 @@ package adapters
 
 import (
 	"context"
+	"slices"
 
 	"github.com/smarty/harness/v2/contracts"
 	"github.com/smarty/harness/v2/internal/storage"
 )
 
-// Recovery pages the backlog of Messages WHERE dispatched IS NULL at startup,
-// returning each row as a *contracts.Message destined for the Dispatcher
-// (publish + mark dispatched). It is a stateful keyset cursor: the pipeline's
-// recovery station calls Recover repeatedly from a single goroutine, and each
-// call returns the next page (at most limit rows, in id order). On the first
-// call it snapshots the backlog's id bounds — MIN/MAX of the undispatched rows
-// that predate startup — so rows persisted by live traffic during the recovery
+// Recovery pages the backlog of Messages WHERE dispatched IS NULL at startup —
+// scoped to the configured stored type names, so undispatched rows owned by
+// other applications sharing the table are left alone — returning each row as
+// a *contracts.Message destined for the Dispatcher (publish + mark
+// dispatched). It is a stateful keyset cursor: the pipeline's recovery station
+// calls Recover repeatedly from a single goroutine, and each call returns the
+// next page (at most limit rows, in id order). On the first call it snapshots
+// the backlog's id bounds — MIN/MAX of the matching undispatched rows that
+// predate startup — so rows persisted by live traffic during the recovery
 // window fall outside the boundary and are left for the live path. An empty
 // page means the backlog is exhausted and recovery is complete. The two SQL
 // queries are routed through the storage.Storage seam.
 type Recovery struct {
 	db          storage.Storage
-	cursor      uint64 // advances past each successfully returned page; starts at MIN(id)-1 of the backlog
-	boundary    uint64 // MAX(id) of the backlog, snapshotted on the first call
+	types       []string // stored type names scoping the backlog; empty = unscoped
+	cursor      uint64   // advances past each successfully returned page; starts at MIN(id)-1 of the backlog
+	boundary    uint64   // MAX(id) of the backlog, snapshotted on the first call
 	snapshotted bool
 }
 
-func NewRecovery(db storage.Storage) *Recovery {
-	return &Recovery{db: db}
+// NewRecovery scopes the backlog to the given stored type names (sorted and
+// deduplicated once here so every query binds an identical, stable argument
+// list). An empty types leaves recovery unscoped, preserving legacy behavior
+// for pipelines wired without MessageTypes.
+func NewRecovery(db storage.Storage, types []string) *Recovery {
+	return &Recovery{db: db, types: slices.Compact(slices.Sorted(slices.Values(types)))}
 }
 
 func (this *Recovery) Recover(ctx context.Context, limit int) ([]*contracts.Message, error) {
@@ -48,7 +56,7 @@ func (this *Recovery) Recover(ctx context.Context, limit int) ([]*contracts.Mess
 // pagination at the backlog that predates startup rather than chasing rows
 // written by live traffic.
 func (this *Recovery) snapshot(ctx context.Context) error {
-	op := new(storage.LoadUndispatchedBounds)
+	op := &storage.LoadUndispatchedBounds{Types: this.types}
 	if err := this.db.Exec(ctx, op); err != nil {
 		return err
 	}
@@ -68,7 +76,7 @@ func (this *Recovery) snapshot(ctx context.Context) error {
 func (this *Recovery) page(ctx context.Context, limit int) ([]*contracts.Message, error) {
 	// NOTE: we're not going to worry about pooling/reusing this operation since
 	// recovery is a one-time procedure executed at startup.
-	op := &storage.LoadUndispatchedPage{AfterID: this.cursor, ThroughID: this.boundary, Limit: limit}
+	op := &storage.LoadUndispatchedPage{Types: this.types, AfterID: this.cursor, ThroughID: this.boundary, Limit: limit}
 	if err := this.db.Exec(ctx, op); err != nil {
 		return nil, err
 	}

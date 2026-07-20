@@ -230,11 +230,18 @@ func (this *Mapper) loadUndispatchedBounds(ctx context.Context, operation *stora
 	if err != nil {
 		return err
 	}
-	var lo, hi sql.NullInt64
-	row := this.handle.QueryRowContext(ctx, fmt.Sprintf(`
+	statement := this.statements.Get()
+	defer this.statements.Put(statement)
+	statement.reset()
+
+	statement.text.WriteString(fmt.Sprintf(`
 		SELECT MIN(id), MAX(id)
 		  FROM %s
 		 WHERE dispatched IS NULL`, table))
+	appendTypeScope(statement, operation.Types)
+
+	var lo, hi sql.NullInt64
+	row := this.handle.QueryRowContext(ctx, statement.text.String(), statement.args...)
 	if err := row.Scan(&lo, &hi); err != nil {
 		return err
 	}
@@ -249,14 +256,23 @@ func (this *Mapper) loadUndispatchedPage(ctx context.Context, operation *storage
 	if err != nil {
 		return err
 	}
-	rows, err := this.handle.QueryContext(ctx, fmt.Sprintf(`
+	statement := this.statements.Get()
+	defer this.statements.Put(statement)
+	statement.reset()
+
+	statement.text.WriteString(fmt.Sprintf(`
 		SELECT id, type, payload
 		  FROM %s
-		 WHERE dispatched IS NULL
+		 WHERE dispatched IS NULL`, table))
+	appendTypeScope(statement, operation.Types)
+	statement.text.WriteString(`
 		   AND id > ?
 		   AND id <= ?
 		 ORDER BY id
-		 LIMIT ?`, table), operation.AfterID, operation.ThroughID, operation.Limit)
+		 LIMIT ?`)
+	statement.args = append(statement.args, operation.AfterID, operation.ThroughID, operation.Limit)
+
+	rows, err := this.handle.QueryContext(ctx, statement.text.String(), statement.args...)
 	if err != nil {
 		return err
 	}
@@ -390,6 +406,24 @@ func (this *Mapper) loadEventsSince(ctx context.Context, op *storage.LoadEventsS
 		op.Result.Events = append(op.Result.Events, event)
 	}
 	return nil
+}
+
+// appendTypeScope narrows an undispatched-backlog query to the given stored
+// type names; an empty set means unscoped (the legacy behavior for pipelines
+// wired without MessageTypes), so no clause is appended.
+func appendTypeScope(statement *statement, types []string) {
+	if len(types) == 0 {
+		return
+	}
+	statement.text.WriteString(` AND type IN (`)
+	for i, name := range types {
+		if i > 0 {
+			statement.text.WriteString(`,`)
+		}
+		statement.text.WriteString(`?`)
+		statement.args = append(statement.args, name)
+	}
+	statement.text.WriteString(`)`)
 }
 
 // quoteTableName guards against SQL injection through interpolated table names:

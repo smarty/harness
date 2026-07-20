@@ -45,7 +45,7 @@ caller        domain          encode          Writer        ack caller    Dispat
 | broadcast     | Call `Dispatcher.Dispatch(...)`; retry forever with backoff. Drains recovery first.  |
 | terminal      | Return pooled `*Message` / `unitOfWork` values to their `sync.Pool`s.                |
 
-Recovery is the same kind of source as a live unit, just one that fires once at process start: it pages the `stored-but-undispatched` backlog out of the same datastore the `Writer` writes to, snapshots its upper bound so live writes can't pollute the cursor, and feeds those rows into broadcast **before any live unit is allowed past broadcast**.
+Recovery is the same kind of source as a live unit, just one that fires once at process start: it pages the `stored-but-undispatched` backlog out of the same datastore the `Writer` writes to, snapshots its upper bound so live writes can't pollute the cursor, and feeds those rows into broadcast **before any live unit is allowed past broadcast**. The backlog is scoped to the type names registered via `Options.MessageTypes(...)`: undispatched rows of other types (say, written by another application sharing the table) are left alone. Omitting `MessageTypes` leaves recovery unscoped. Caveat: when deploying a scoped configuration, make sure the names cover every type the application has ever written that could still be undispatched — out-of-scope rows are never republished.
 
 
 ## Guarantees worth knowing about
@@ -184,7 +184,7 @@ Defaults are tuned so `harness.New(ctx)` produces a runnable (but inert) pipelin
 | `ExecutionUnitSize`       | 64      | Max batches coalesced per unit of work. Trade latency for throughput.           |
 | `ShedThreshold`           | 0.80    | Entrypoint fill ratio at which `SheddingHTTPWrapper` starts returning 503.      |
 | `DomainTypes(...)`        | —       | Handlers whose `Execute<T>`/`Apply<T>` methods drive the pipeline.              |
-| `MessageTypes(...)`       | —       | `reflect.Type` → type-name map stamped into each persisted message.             |
+| `MessageTypes(...)`       | —       | `reflect.Type` → type-name map stamped into each message; also scopes recovery. |
 | `Serializer`              | no-op   | Encodes outbound event values into their `Content` buffer.                      |
 | `Storage`                 | no-op   | Persists messages, marks them dispatched, and pages the recovery backlog.       |
 | `Dispatcher`              | no-op   | Publishes messages downstream (your broker). Retried forever on error.          |

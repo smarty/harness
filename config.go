@@ -104,6 +104,13 @@ func (singleton) DomainTypes(value ...any) option {
 
 // MessageTypes allows the caller to specify the names of message types produced
 // by the domain types for eventual persistence and publishing by the pipeline.
+// The same names also scope startup recovery: only stored-but-undispatched rows
+// whose type matches one of these names are republished, so rows owned by other
+// applications sharing the Messages table are left alone. Omitting this option
+// leaves recovery unscoped (every undispatched row is republished). Before
+// deploying a scoped configuration, confirm the names cover every type the
+// application has ever written that could still be undispatched — out-of-scope
+// rows are never recovered.
 func (singleton) MessageTypes(value map[reflect.Type]string) option {
 	return func(this *pipeline.Configuration) { this.MessageTypes = value }
 }

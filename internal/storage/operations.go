@@ -30,18 +30,23 @@ type InsertMessages struct {
 	Messages []*contracts.Message
 }
 
-// LoadUndispatchedBounds reports the id range of the undispatched backlog.
+// LoadUndispatchedBounds reports the id range of the undispatched backlog,
+// scoped to the given stored type names (an empty Types means unscoped: all
+// types are considered).
 type LoadUndispatchedBounds struct {
-	Found bool   // false when the backlog is empty (both bounds NULL)
-	Min   uint64 // populated by the handler
+	Types []string // sorted stored type names to scope to; empty = unscoped
+	Found bool     // false when the backlog is empty (both bounds NULL)
+	Min   uint64   // populated by the handler
 	Max   uint64
 }
 
 // LoadUndispatchedPage loads up to Limit undispatched messages in id order
-// within the half-open window (AfterID, ThroughID].
+// within the half-open window (AfterID, ThroughID], scoped to the given stored
+// type names (an empty Types means unscoped: all types are considered).
 type LoadUndispatchedPage struct {
-	AfterID   uint64 // exclusive lower bound (the cursor)
-	ThroughID uint64 // inclusive upper bound (the frozen boundary)
+	Types     []string // sorted stored type names to scope to; empty = unscoped
+	AfterID   uint64   // exclusive lower bound (the cursor)
+	ThroughID uint64   // inclusive upper bound (the frozen boundary)
 	Limit     int
 	Messages  []*contracts.Message // populated by the handler
 }

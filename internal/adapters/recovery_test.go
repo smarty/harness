@@ -29,7 +29,8 @@ type RecoveryFixture struct {
 func (this *RecoveryFixture) Setup() {
 	this.ctx = context.WithValue(this.Context(), "testing", this.Name())
 	this.db = &fakeRecoveryDB{expectedCtxValue: this.Name(), fixture: this.Fixture}
-	this.subject = NewRecovery(this.db)
+	// Unsorted, with a duplicate: the constructor must sort and dedupe.
+	this.subject = NewRecovery(this.db, []string{"order-received", "order-approved", "order-received"})
 }
 
 // drain pages the subject with the given limit until an empty page, returning
@@ -50,6 +51,24 @@ func ids(messages []*contracts.Message) (results []uint64) {
 		results = append(results, message.ID)
 	}
 	return results
+}
+
+func (this *RecoveryFixture) TestBoundsQueryCarriesSortedDedupedTypeScope() {
+	this.db.rows = []fakeRow{{id: 1}}
+
+	_, err := this.subject.Recover(this.ctx, 64)
+
+	this.So(err, should.BeNil)
+	this.So(this.db.firstBounds.Types, should.Equal, []string{"order-approved", "order-received"})
+}
+
+func (this *RecoveryFixture) TestPageQueryCarriesSortedDedupedTypeScope() {
+	this.db.rows = []fakeRow{{id: 1}}
+
+	_, err := this.subject.Recover(this.ctx, 64)
+
+	this.So(err, should.BeNil)
+	this.So(this.db.firstPage.Types, should.Equal, []string{"order-approved", "order-received"})
 }
 
 func (this *RecoveryFixture) TestEmptyBacklog_CompletesOnFirstCall() {
@@ -194,6 +213,7 @@ type fakeRecoveryDB struct {
 
 	boundsCalls int
 	pageCalls   int
+	firstBounds storage.LoadUndispatchedBounds
 	firstPage   storage.LoadUndispatchedPage
 	lastPage    storage.LoadUndispatchedPage
 }
@@ -203,6 +223,9 @@ func (this *fakeRecoveryDB) Exec(ctx context.Context, operation any) error {
 	switch op := operation.(type) {
 	case *storage.LoadUndispatchedBounds:
 		this.boundsCalls++
+		if this.boundsCalls == 1 {
+			this.firstBounds = *op
+		}
 		if this.boundsErr != nil {
 			return this.boundsErr
 		}
